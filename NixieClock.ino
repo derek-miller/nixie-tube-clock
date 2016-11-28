@@ -127,7 +127,8 @@ void tmElementsToNixieDisplay(tmElements_t &tm, nixieDisplay_t &digits) {
     digits.LowerMin = tm.Minute % 10;
     digits.UpperMin = tm.Minute - digits.LowerMin;
     if (digits.UpperMin >= 10) digits.UpperMin = digits.UpperMin / 10;
-
+    digits.Dots = 0;
+    digits.Colon = 0;
     digits.Initialized = true;
 }
 
