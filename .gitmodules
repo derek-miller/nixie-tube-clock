@@ -1,0 +1,6 @@
+[submodule "Time"]
+	path = Time
+	url = https://github.com/PaulStoffregen/Time.git
+[submodule "Timezone"]
+	path = Timezone
+	url = https://github.com/JChristensen/Timezone.git
