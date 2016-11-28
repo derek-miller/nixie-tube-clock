@@ -61,6 +61,38 @@ uint8_t ANODE_TIME_SEL_PINS[] = {44, 42, 40, 38};
 /*******************************************************************************
  * HELPER FUNCTIONS
  ******************************************************************************/
+void printTimeElements(tmElements_t &tm){
+    Serial.print(tm.Year + 1970);
+    Serial.print("-");
+    Serial.print(tm.Month);
+    Serial.print("-");
+    Serial.print(tm.Day);
+    Serial.print("T");
+    Serial.print(tm.Hour);
+    Serial.print(":");
+    Serial.print(tm.Minute);
+    Serial.print(":");
+    Serial.println(tm.Second);
+}
+
+void printNixieDisplay(nixieDisplay_t &digits){
+    Serial.print(digits.UpperYear);
+    Serial.print(digits.LowerYear);
+    Serial.print("-");
+    Serial.print(digits.UpperMonth);
+    Serial.print(digits.LowerMonth);
+    Serial.print("-");
+    Serial.print(digits.UpperDay);
+    Serial.print(digits.LowerDay);
+    Serial.print("T");
+    Serial.print(digits.UpperHour);
+    Serial.print(digits.LowerHour);
+    Serial.print(":");
+    Serial.print(digits.UpperMin);
+    Serial.println(digits.LowerMin);
+}
+
+
 /*
  * LED Helper Functions
  */
@@ -127,6 +159,7 @@ void tmElementsToNixieDisplay(tmElements_t &tm, nixieDisplay_t &digits) {
     digits.LowerMin = tm.Minute % 10;
     digits.UpperMin = tm.Minute - digits.LowerMin;
     if (digits.UpperMin >= 10) digits.UpperMin = digits.UpperMin / 10;
+
     digits.Dots = 0;
     digits.Colon = 0;
     digits.Initialized = true;
@@ -161,11 +194,13 @@ void displayNixieTubeDatePair(int anode, int num1, int num2) {
 }
 
 void DisplayNixieTubeDateTime(int displayState, nixieDisplay_t &digits) {
+    // printNixieDisplay(digits);
     switch (displayState) {
         case (2):
             // Display time
-            displayNixieTubeTimePair(3, digits.UpperHour, 0);
-            displayNixieTubeTimePair(0, 0, digits.LowerHour);
+//            displayNixieTubeTimePair(3, digits.UpperHour, 0);
+//            displayNixieTubeTimePair(0, 0, digits.LowerHour);
+            displayNixieTubeTimePair(0, digits.UpperHour, digits.LowerHour);
             displayNixieTubeTimePair(1, digits.UpperMin, digits.LowerMin);
             displayNixieTubeTimePair(2, digits.Colon, digits.Colon);
             // Display date
@@ -176,8 +211,9 @@ void DisplayNixieTubeDateTime(int displayState, nixieDisplay_t &digits) {
             break;
         case (1):
             // Display time
-            displayNixieTubeTimePair(3, digits.UpperHour, 0);
-            displayNixieTubeTimePair(0, 0, digits.LowerHour);
+//            displayNixieTubeTimePair(3, digits.UpperHour, 0);
+//            displayNixieTubeTimePair(0, 0, digits.LowerHour);
+            displayNixieTubeTimePair(0, digits.UpperHour, digits.LowerHour);
             displayNixieTubeTimePair(1, digits.UpperMin, digits.LowerMin);
             displayNixieTubeTimePair(2, digits.Colon, digits.Colon);
             // Disable date display
@@ -293,6 +329,7 @@ void GetRTCDateTime(tmElements_t &tm) {
     tm.Hour = (uint8_t) (pm == 1 ? dateTime[2] + 12 : dateTime[2]); // Hour
     tm.Minute = (uint8_t) dateTime[1]; // Min
     tm.Second = (uint8_t) dateTime[0]; // Sec
+//    printTimeElements(tm);
 }
 
 
@@ -301,7 +338,7 @@ void GetRTCDateTime(tmElements_t &tm) {
  */
 
 const char _server[] = "www.timeapi.org";
-const char _location[] = "/utc/now?format=^%25Y-%25m-%25dT%25I:%25M:%25S%25p$";
+const char _location[] = "/utc/now?format=^%25Y-%25m-%25dT%25H:%25M:%25S$";
 TimeChangeRule usPDT = {"PDT", Second, Sun, Mar, 2, -420};
 TimeChangeRule usPST = {"PST", First, Sun, Nov, 2, -480};
 Timezone usPT(usPDT, usPST);
@@ -360,10 +397,15 @@ boolean UpdateRTCDateTime() {
         utcElements.Hour = (uint8_t) dateTimeStr.substring(11, 13).toInt();
         utcElements.Minute = (uint8_t) dateTimeStr.substring(14, 16).toInt();
         utcElements.Second = (uint8_t) dateTimeStr.substring(17, 19).toInt();
+        Serial.print("UTC: ");
+        printTimeElements(utcElements);
+
         time_t utc = makeTime(utcElements);
         time_t local = usPT.toLocal(utc);
         tmElements_t ptElements;
         breakTime(local, ptElements);
+        Serial.print("PT: ");
+        printTimeElements(ptElements);
 
         // Set RTC to updated time
         SetRTCDateTime(ptElements);

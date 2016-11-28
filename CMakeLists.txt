@@ -4,8 +4,8 @@ set(PROJECT_NAME NixieClock)
 project(${PROJECT_NAME})
 
 set(${CMAKE_PROJECT_NAME}_BOARD mega)
-set(${CMAKE_PROJECT_NAME}_PORT /dev/tty.usbmodem14111)
-set(${CMAKE_PROJECT_NAME}_SERIAL screen /dev/tty.usbmodem14111)
+set(${CMAKE_PROJECT_NAME}_PORT /dev/tty.usbmodem14121)
+set(${CMAKE_PROJECT_NAME}_SERIAL screen /dev/tty.usbmodem14121)
 
 set(${CMAKE_PROJECT_NAME}_ARDLIBS Timezone Time)
 set(${CMAKE_PROJECT_NAME}_SKETCH NixieClock.ino)
