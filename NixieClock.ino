@@ -96,10 +96,10 @@ void printNixieDisplay(nixieDisplay_t &digits){
 /*
  * LED Helper Functions
  */
-void LEDOn(int red, int green, int blue) {
-    analogWrite(LED_RED_PIN, red);
-    analogWrite(LED_GREEN_PIN, green);
-    analogWrite(LED_BLUE_PIN, blue);
+void LEDOn(ledDisplay_t &rgb) {
+    analogWrite(LED_RED_PIN, rgb.Red);
+    analogWrite(LED_GREEN_PIN, rgb.Green);
+    analogWrite(LED_BLUE_PIN, rgb.Blue);
 }
 
 void LEDOff() {
@@ -112,13 +112,13 @@ void LEDOff() {
 int _ledState = LOW;
 long _previousMillis = 0;
 
-int LEDBlink(int blinks, int red, int green, int blue) {
+int LEDBlink(int blinks, ledDisplay_t &rgb) {
     unsigned long currentMillis = millis();
     if (currentMillis - _previousMillis > LED_BLINK_INTERVAL) {
         _previousMillis = currentMillis;
         if (_ledState == LOW) {
             _ledState = HIGH;
-            LEDOn(red, green, blue);
+            LEDOn(rgb);
             blinks--;
         } else {
             _ledState = LOW;
@@ -126,6 +126,34 @@ int LEDBlink(int blinks, int red, int green, int blue) {
         }
     }
     return blinks;
+}
+
+ledDisplay_t getLEDColor(int displayState) {
+    ledDisplay_t rgb;
+    switch (displayState) {
+        default:
+        case (0): // Off
+            rgb.Red = 50;
+            rgb.Green = 0;
+            rgb.Blue = 0;
+            break;
+        case (1): // Time Only
+            rgb.Red = 0;
+            rgb.Green = 0;
+            rgb.Blue = 50;
+            break;
+        case (2):  // Time & Date
+            rgb.Red = 0;
+            rgb.Green = 50;
+            rgb.Blue = 0;
+            break;
+        case (3):  // Rolling Digits
+            rgb.Red = 50;
+            rgb.Green = 50;
+            rgb.Blue = 50;
+            break;
+    }
+    return rgb;
 }
 
 
@@ -168,18 +196,30 @@ void tmElementsToNixieDisplay(tmElements_t &tm, nixieDisplay_t &digits) {
 void displayNixieTubeDigitPair(int anodeIndex, uint8_t *anodeSelPins,
                                int num1, uint8_t *num1SelPins,
                                int num2, uint8_t *num2SelPins) {
-    // Write to select pins for mux 1
-    digitalWrite(num1SelPins[0], (uint8_t) bitRead(num1, 0));
-    digitalWrite(num1SelPins[1], (uint8_t) bitRead(num1, 1));
-    digitalWrite(num1SelPins[2], (uint8_t) bitRead(num1, 2));
-    digitalWrite(num1SelPins[3], (uint8_t) bitRead(num1, 3));
-
-    // Write to select pins for mux 2
-    digitalWrite(num2SelPins[0], (uint8_t) bitRead(num2, 0));
-    digitalWrite(num2SelPins[1], (uint8_t) bitRead(num2, 1));
-    digitalWrite(num2SelPins[2], (uint8_t) bitRead(num2, 2));
-    digitalWrite(num2SelPins[3], (uint8_t) bitRead(num2, 3));
-
+    if(num1 >= 0) {
+        // Write to select pins for mux 1
+        digitalWrite(num1SelPins[0], (uint8_t) bitRead(num1, 0));
+        digitalWrite(num1SelPins[1], (uint8_t) bitRead(num1, 1));
+        digitalWrite(num1SelPins[2], (uint8_t) bitRead(num1, 2));
+        digitalWrite(num1SelPins[3], (uint8_t) bitRead(num1, 3));
+    } else {
+        digitalWrite(num1SelPins[0], 0);
+        digitalWrite(num1SelPins[1], 0);
+        digitalWrite(num1SelPins[2], 0);
+        digitalWrite(num1SelPins[3], 0);
+    }
+    if(num2 >= 0) {
+        // Write to select pins for mux 2
+        digitalWrite(num2SelPins[0], (uint8_t) bitRead(num2, 0));
+        digitalWrite(num2SelPins[1], (uint8_t) bitRead(num2, 1));
+        digitalWrite(num2SelPins[2], (uint8_t) bitRead(num2, 2));
+        digitalWrite(num2SelPins[3], (uint8_t) bitRead(num2, 3));
+    } else {
+        digitalWrite(num2SelPins[0], 0);
+        digitalWrite(num2SelPins[1], 0);
+        digitalWrite(num2SelPins[2], 0);
+        digitalWrite(num2SelPins[3], 0);
+    }
     digitalWrite(anodeSelPins[anodeIndex], HIGH);
     delay(2);
     digitalWrite(anodeSelPins[anodeIndex], LOW);
@@ -194,12 +234,12 @@ void displayNixieTubeDatePair(int anode, int num1, int num2) {
 }
 
 void DisplayNixieTubeDateTime(int displayState, nixieDisplay_t &digits) {
-    // printNixieDisplay(digits);
+    printNixieDisplay(digits);
     switch (displayState) {
         case (2):
-            // Display time
-//            displayNixieTubeTimePair(3, digits.UpperHour, 0);
-//            displayNixieTubeTimePair(0, 0, digits.LowerHour);
+        case (3):
+//            // Display time
+//            displayNixieTubeTimePair(3, digits.UpperHour, 2);
             displayNixieTubeTimePair(0, digits.UpperHour, digits.LowerHour);
             displayNixieTubeTimePair(1, digits.UpperMin, digits.LowerMin);
             displayNixieTubeTimePair(2, digits.Colon, digits.Colon);
@@ -210,17 +250,16 @@ void DisplayNixieTubeDateTime(int displayState, nixieDisplay_t &digits) {
             displayNixieTubeDatePair(3, digits.Dots, digits.Dots);
             break;
         case (1):
-            // Display time
-//            displayNixieTubeTimePair(3, digits.UpperHour, 0);
-//            displayNixieTubeTimePair(0, 0, digits.LowerHour);
-            displayNixieTubeTimePair(0, digits.UpperHour, digits.LowerHour);
-            displayNixieTubeTimePair(1, digits.UpperMin, digits.LowerMin);
-            displayNixieTubeTimePair(2, digits.Colon, digits.Colon);
             // Disable date display
             digitalWrite(ANODE_DATE_SEL_PINS[0], LOW);
             digitalWrite(ANODE_DATE_SEL_PINS[1], LOW);
             digitalWrite(ANODE_DATE_SEL_PINS[2], LOW);
             digitalWrite(ANODE_DATE_SEL_PINS[3], LOW);
+            // Display time
+            displayNixieTubeTimePair(3, digits.UpperHour, 0);
+            displayNixieTubeTimePair(0, 0, digits.LowerHour);
+            displayNixieTubeTimePair(1, digits.UpperMin, digits.LowerMin);
+            displayNixieTubeTimePair(2, digits.Colon, digits.Colon);
             break;
         case (0):
         default:
@@ -344,7 +383,8 @@ TimeChangeRule usPST = {"PST", First, Sun, Nov, 2, -480};
 Timezone usPT(usPDT, usPST);
 
 boolean UpdateRTCDateTime() {
-    LEDOn(0, 0, 255);
+    ledDisplay_t rgb = {0, 0, 255};
+    LEDOn(rgb);
 
     Serial.print("initializing...");
     if (Ethernet.begin(mac) == 0) {
@@ -418,13 +458,39 @@ boolean UpdateRTCDateTime() {
 
 nixieDisplay_t _currentDigits;
 
+
+uint8_t counter = 0;
+uint8_t numTimes = 0;
+const uint8_t totalTimes = 40;
+
 void UpdateNixieTubeDateTime(int displayState, tmElements_t &tm) {
     // Load the latest time from the RTC module
-    GetRTCDateTime(tm);
-
     nixieDisplay_t targetDigits;
-    tmElementsToNixieDisplay(tm, targetDigits);
-
+    if (displayState == 3) {
+        if (counter > 9) counter = 0;
+        targetDigits.UpperYear = counter;
+        targetDigits.LowerYear = counter;
+        targetDigits.UpperMonth = counter;
+        targetDigits.LowerMonth = counter;
+        targetDigits.UpperDay = counter;
+        targetDigits.LowerDay = counter;
+        targetDigits.UpperHour = counter;
+        targetDigits.LowerHour = counter;
+        targetDigits.UpperMin = counter;
+        targetDigits.LowerMin = counter;
+        targetDigits.Dots = 0;
+        targetDigits.Colon = 0;
+        targetDigits.Initialized = true;
+        if (numTimes == totalTimes) {
+            numTimes = 0;
+            counter++;
+        } else {
+            numTimes++;
+        }
+    } else {
+        GetRTCDateTime(tm);
+        tmElementsToNixieDisplay(tm, targetDigits);
+    }
     if (!_currentDigits.Initialized) {
         memcpy(&_currentDigits, &targetDigits, sizeof(targetDigits));
     }
@@ -471,8 +537,20 @@ int _blinks = LED_BLINK_DEFAULT;
 int _displayState = 2; // 0: off, 1: time only, 2: time & date
 int _successState = 2; // 0: success, 1: fail, 2: idle
 tmElements_t _tm;
-int _ledStandby[] = {0, 1, 0}; // RGB values (0-255)
 
+int nextDisplay(int displayState) {
+    switch (displayState) {
+        default:
+        case (0): // Currently Off
+            return 2;
+        case (2):  // Currently Time & Date
+            return  1;
+        case (1): // Currently Time Only
+            return 3;
+        case (3):  // Currently Rolling
+            return  0;
+    }
+}
 
 void setup() {
     Serial.begin(9600);
@@ -550,13 +628,16 @@ void loop() {
         _blinks = LED_BLINK_DEFAULT;
     } else if (_successState == 0) {
         // Bright green; Successful time sync
-        _blinks = LEDBlink(_blinks, 0, 255, 0);
+        ledDisplay_t rgb = {0, 255, 0};
+        _blinks = LEDBlink(_blinks, rgb);
     } else if (_successState == 1) {
         // Bright red; Failed time sync
-        _blinks = LEDBlink(_blinks, 255, 0, 0);
+        ledDisplay_t rgb = {255, 0, 0};
+        _blinks = LEDBlink(_blinks, rgb);
     } else {
         // Standby
-        LEDOn(_ledStandby[0], _ledStandby[1], _ledStandby[2]);
+        ledDisplay_t rgb = getLEDColor(_displayState);
+        LEDOn(rgb);
     }
 
     // Read button;
@@ -575,28 +656,7 @@ void loop() {
             }
             sync = (boolean) digitalRead(BUTTON_DIO);
         }
-
-        switch (_displayState) {
-            case (0): // Currently Off
-                _ledStandby[0] = 0;
-                _ledStandby[1] = 1;
-                _ledStandby[2] = 0;
-                _displayState = 2;
-                break;
-            case (1): // Currently Time Only
-                _ledStandby[0] = 1;
-                _ledStandby[1] = 0;
-                _ledStandby[2] = 0;
-                _displayState = 0;
-                break;
-            case (2):  // Currently Time & Date
-            default:
-                _ledStandby[0] = 0;
-                _ledStandby[1] = 0;
-                _ledStandby[2] = 1;
-                _displayState = 1;
-                break;
-        }
+        _displayState = nextDisplay(_displayState);
     }
     UpdateNixieTubeDateTime(_displayState, _tm);
 }
