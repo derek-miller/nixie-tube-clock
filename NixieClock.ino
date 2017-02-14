@@ -17,7 +17,8 @@
  * Ethernet
  */
 byte mac[] = {0x90, 0xA2, 0xDA, 0x00, 0xF8, 0x1A};
-EthernetClient client;
+EthernetUDP udp;
+unsigned int localUdpPort = 8888;  // local port to listen for UDP packets
 
 
 /*
@@ -234,12 +235,14 @@ void displayNixieTubeDatePair(int anode, int num1, int num2) {
 }
 
 void DisplayNixieTubeDateTime(int displayState, nixieDisplay_t &digits) {
-    printNixieDisplay(digits);
+//    printNixieDisplay(digits);
     switch (displayState) {
         case (2):
         case (3):
-//            // Display time
-//            displayNixieTubeTimePair(3, digits.UpperHour, 2);
+            // Display time
+            // displayNixieTubeTimePair(3, digits.UpperHour, 0);  old broken code
+            // displayNixieTubeTimePair(0, 0, digits.LowerHour);
+            displayNixieTubeTimePair(3, digits.UpperHour, digits.LowerHour);
             displayNixieTubeTimePair(0, digits.UpperHour, digits.LowerHour);
             displayNixieTubeTimePair(1, digits.UpperMin, digits.LowerMin);
             displayNixieTubeTimePair(2, digits.Colon, digits.Colon);
@@ -376,8 +379,82 @@ void GetRTCDateTime(tmElements_t &tm) {
  * High Level Helper Functions
  */
 
-const char _server[] = "www.timeapi.org";
-const char _location[] = "/utc/now?format=^%25Y-%25m-%25dT%25H:%25M:%25S$";
+/*
+ * © Francesco Potortì 2013 - GPLv3 - Revision: 1.13
+ *
+ * Send an NTP packet and wait for the response, return the Unix time
+ *
+ * To lower the memory footprint, no buffers are allocated for sending
+ * and receiving the NTP packets.  Four bytes of memory are allocated
+ * for transmision, the rest is random garbage collected from the data
+ * memory segment, and the received packet is read one byte at a time.
+ * The Unix time is returned, that is, seconds from 1970-01-01T00:00.
+ */
+unsigned long inline ntpUnixTime(UDP &udp) {
+    static int udpInited = udp.begin(localUdpPort); // open socket on arbitrary port
+
+    const char timeServer[] = "pool.ntp.org";  // NTP server
+
+    // Only the first four bytes of an outgoing NTP packet need to be set
+    // appropriately, the rest can be whatever.
+    const long ntpFirstFourBytes = 0xEC0600E3; // NTP request header
+
+    // Fail if WiFiUdp.begin() could not init a socket
+    if (!udpInited) {
+        Serial.println("failed; could not init ntp socket");
+        return 0;
+    }
+
+    // Clear received data from possible stray received packets
+    udp.flush();
+
+    // Send an NTP request
+    if (!(udp.beginPacket(timeServer, 123) // 123 is the NTP port
+          && udp.write((byte *) &ntpFirstFourBytes, 48) == 48
+          && udp.endPacket())) {
+        Serial.println("failed; could not send ntp packet");
+        return 0;                // sending request failed
+    }
+
+    // Wait for response; check every pollIntv ms up to maxPoll times
+    const int pollIntv = 150;        // poll every this many ms
+    const byte maxPoll = 15;        // poll up to this many times
+    int pktLen;                // received packet length
+    for (byte i = 0; i < maxPoll; i++) {
+        if ((pktLen = udp.parsePacket()) == 48)
+            break;
+        delay(pollIntv);
+    }
+    if (pktLen != 48) {
+        Serial.println("failed; invalid ntp packet received");
+        return 0;                // no correct packet received
+    }
+    // Read and discard the first useless bytes
+    // Set useless to 32 for speed; set to 40 for accuracy.
+    const byte useless = 40;
+    for (byte i = 0; i < useless; ++i)
+        udp.read();
+
+    // Read the integer part of sending time
+    unsigned long time = udp.read();    // NTP time
+    for (byte i = 1; i < 4; i++)
+        time = time << 8 | udp.read();
+
+    // Round to the nearest second if we want accuracy
+    // The fractionary part is the next byte divided by 256: if it is
+    // greater than 500ms we round to the next second; we also account
+    // for an assumed network delay of 50ms, and (0.5-0.05)*256=115;
+    // additionally, we account for how much we delayed reading the packet
+    // since its arrival, which we assume on average to be pollIntv/2.
+    time += (udp.read() > 115 - pollIntv / 8);
+
+    // Discard the rest of the packet
+    udp.flush();
+
+    return time - 2208988800ul;        // convert NTP time to Unix time
+}
+
+
 TimeChangeRule usPDT = {"PDT", Second, Sun, Mar, 2, -420};
 TimeChangeRule usPST = {"PST", First, Sun, Nov, 2, -480};
 Timezone usPT(usPDT, usPST);
@@ -386,73 +463,29 @@ boolean UpdateRTCDateTime() {
     ledDisplay_t rgb = {0, 0, 255};
     LEDOn(rgb);
 
-    Serial.print("initializing...");
-    if (Ethernet.begin(mac) == 0) {
-        Serial.println("failed");
+    Serial.print("fetching ntp time...");
+    unsigned long unixTime = ntpUnixTime(udp);
+    if (unixTime == 0) {
         return false;
     }
     Serial.println("done");
 
+    // Parse utc timestamp into time elements and print it
+    tmElements_t utcElements;
+    breakTime(unixTime, utcElements);
+    Serial.print("UTC: ");
+    printTimeElements(utcElements);
 
-    Serial.print("connecting...");
-    if (client.connect(_server, 80)) {
-        Serial.println("done");
+    // Parse utc timestamp and convert it to local time
+    time_t local = usPT.toLocal(unixTime);
+    tmElements_t ptElements;
+    breakTime(local, ptElements);
+    Serial.print("PT: ");
+    printTimeElements(ptElements);
 
-        client.println("GET " + String(_location) + " HTTP/1.1");
-        client.println("Host: " + String(_server));
-        client.println("User-Agent: Arduino/NixieClock");
-        client.println("Accept: */*");
-        client.println("Connection: close");
-        client.println();
-
-        Serial.print("reading...");
-        String dateTimeStr = "";
-        boolean startReading = false;
-        while (client.connected()) {
-            if (client.available()) {
-                String c = String((char) client.read());
-                if (c == "^") {
-                    startReading = true;
-                } else if (c == "$") {
-                    break;
-                } else if (startReading) {
-                    dateTimeStr = dateTimeStr + c;
-                }
-            } else {
-                delay(5);
-            }
-        }
-        Serial.println("done");
-
-        Serial.print("disconnecting...");
-        client.stop();
-        client.flush();
-        Serial.println("done");
-
-        // Convert UTC time to the local timezone correcting for DST
-        tmElements_t utcElements;
-        utcElements.Year = (uint8_t) (dateTimeStr.substring(0, 4).toInt() - 1970);
-        utcElements.Month = (uint8_t) dateTimeStr.substring(5, 7).toInt();
-        utcElements.Day = (uint8_t) dateTimeStr.substring(8, 10).toInt();
-        utcElements.Hour = (uint8_t) dateTimeStr.substring(11, 13).toInt();
-        utcElements.Minute = (uint8_t) dateTimeStr.substring(14, 16).toInt();
-        utcElements.Second = (uint8_t) dateTimeStr.substring(17, 19).toInt();
-        Serial.print("UTC: ");
-        printTimeElements(utcElements);
-
-        time_t utc = makeTime(utcElements);
-        time_t local = usPT.toLocal(utc);
-        tmElements_t ptElements;
-        breakTime(local, ptElements);
-        Serial.print("PT: ");
-        printTimeElements(ptElements);
-
-        // Set RTC to updated time
-        SetRTCDateTime(ptElements);
-        return true;
-    }
-    Serial.println("failed");
-    return false;
+    // Set RTC to updated time
+    SetRTCDateTime(ptElements);
+    return true;
 }
 
 
@@ -546,7 +579,7 @@ int nextDisplay(int displayState) {
         case (2):  // Currently Time & Date
             return  1;
         case (1): // Currently Time Only
-            return 3;
+            return 0;  // returning 3 here enables the rolling digit
         case (3):  // Currently Rolling
             return  0;
     }
@@ -576,6 +609,7 @@ void setup() {
     // Enable:  Temperature Compensation
     digitalWrite(RTC_CHIP_SEL, HIGH);
 
+    Ethernet.begin(mac);
 
     //Button Setup
     pinMode(BUTTON_PWR_PIN, OUTPUT);
@@ -650,7 +684,7 @@ void loop() {
         while (sync == LOW) {
             UpdateNixieTubeDateTime(_displayState, _tm);
             if ((millis() - pressed) > 1500) {
-                // Sync time to internet
+                // Sync time from ntp source
                 _successState = UpdateRTCDateTime() ? 0 : 1;
                 goto beginning;
             }
