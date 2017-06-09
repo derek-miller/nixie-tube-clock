@@ -134,24 +134,24 @@ ledDisplay_t getLEDColor(int displayState) {
     switch (displayState) {
         default:
         case (0): // Off
-            rgb.Red = 50;
+            rgb.Red = 5;
             rgb.Green = 0;
             rgb.Blue = 0;
             break;
         case (1): // Time Only
             rgb.Red = 0;
             rgb.Green = 0;
-            rgb.Blue = 50;
+            rgb.Blue = 5;
             break;
         case (2):  // Time & Date
             rgb.Red = 0;
-            rgb.Green = 50;
+            rgb.Green = 5;
             rgb.Blue = 0;
             break;
         case (3):  // Rolling Digits
-            rgb.Red = 50;
-            rgb.Green = 50;
-            rgb.Blue = 50;
+            rgb.Red = 5;
+            rgb.Green = 5;
+            rgb.Blue = 5;
             break;
     }
     return rgb;
@@ -585,6 +585,38 @@ int nextDisplay(int displayState) {
     }
 }
 
+boolean _lastButtonState = HIGH;
+boolean _currentButtonState;
+unsigned long _lastDebounceTime = 0;
+unsigned long _debounceDelay = 25;
+
+boolean isButtonPressed() {
+//    boolean rv = false;
+    boolean newButtonState = (boolean) digitalRead(BUTTON_DIO);
+
+    // check to see if you just pressed the button
+    // (i.e. the input went from LOW to HIGH),  and you've waited
+    // long enough since the last press to ignore any noise:
+
+    // If the switch changed, due to noise or pressing:
+    if (newButtonState != _lastButtonState) {
+        // reset the debouncing timer
+        _lastDebounceTime = millis();
+    }
+
+    if ((millis() - _lastDebounceTime) > _debounceDelay) {
+        // whatever the reading is at, it's been there for longer
+        // than the debounce delay, so take it as the actual current state:
+
+        // if the button state has changed:
+        if (newButtonState != _currentButtonState) {
+            _currentButtonState = newButtonState;
+        }
+    }
+    _lastButtonState = newButtonState;
+    return _currentButtonState == LOW;
+}
+
 void setup() {
     Serial.begin(9600);
 
@@ -652,6 +684,9 @@ void setup() {
 }
 
 
+boolean pressed = false;
+unsigned long pressed_time = 0;
+
 void loop() {
     beginning:
 
@@ -675,20 +710,18 @@ void loop() {
     }
 
     // Read button;
-    boolean sync = (boolean) digitalRead(BUTTON_DIO);
-    if (sync == LOW) {
+    pressed = isButtonPressed();
+    if (pressed) {
         // Button was pressed
-        unsigned long pressed = millis();
-        UpdateNixieTubeDateTime(_displayState, _tm);
-
-        while (sync == LOW) {
+        pressed_time = millis();
+        while (pressed) {
             UpdateNixieTubeDateTime(_displayState, _tm);
-            if ((millis() - pressed) > 1500) {
+            if ((millis() - pressed_time) > 1500) {
                 // Sync time from ntp source
                 _successState = UpdateRTCDateTime() ? 0 : 1;
                 goto beginning;
             }
-            sync = (boolean) digitalRead(BUTTON_DIO);
+            pressed = isButtonPressed();
         }
         _displayState = nextDisplay(_displayState);
     }
