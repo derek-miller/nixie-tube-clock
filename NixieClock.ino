@@ -6,6 +6,8 @@
 #include <Time.h>
 // https://github.com/JChristensen/Timezone
 #include <Timezone.h>
+// https://github.com/arduino-libraries/NTPClient
+#include <NTPClient.h>
 
 #include <CustomTypes.h>
 
@@ -18,7 +20,7 @@
  */
 byte mac[] = {0x90, 0xA2, 0xDA, 0x00, 0xF8, 0x1A};
 EthernetUDP udp;
-unsigned int localUdpPort = 8888;  // local port to listen for UDP packets
+NTPClient timeClient(udp);
 
 
 /*
@@ -58,11 +60,10 @@ uint8_t ANODE_DATE_SEL_PINS[] = {45, 43, 41, 39};
 uint8_t ANODE_TIME_SEL_PINS[] = {44, 42, 40, 38};
 
 
-
 /*******************************************************************************
  * HELPER FUNCTIONS
  ******************************************************************************/
-void printTimeElements(tmElements_t &tm){
+void printTimeElements(tmElements_t &tm) {
     Serial.print(tm.Year + 1970);
     Serial.print("-");
     Serial.print(tm.Month);
@@ -76,7 +77,7 @@ void printTimeElements(tmElements_t &tm){
     Serial.println(tm.Second);
 }
 
-void printNixieDisplay(nixieDisplay_t &digits){
+void printNixieDisplay(nixieDisplay_t &digits) {
     Serial.print(digits.UpperYear);
     Serial.print(digits.LowerYear);
     Serial.print("-");
@@ -197,7 +198,7 @@ void tmElementsToNixieDisplay(tmElements_t &tm, nixieDisplay_t &digits) {
 void displayNixieTubeDigitPair(int anodeIndex, uint8_t *anodeSelPins,
                                int num1, uint8_t *num1SelPins,
                                int num2, uint8_t *num2SelPins) {
-    if(num1 >= 0) {
+    if (num1 >= 0) {
         // Write to select pins for mux 1
         digitalWrite(num1SelPins[0], (uint8_t) bitRead(num1, 0));
         digitalWrite(num1SelPins[1], (uint8_t) bitRead(num1, 1));
@@ -209,7 +210,7 @@ void displayNixieTubeDigitPair(int anodeIndex, uint8_t *anodeSelPins,
         digitalWrite(num1SelPins[2], 0);
         digitalWrite(num1SelPins[3], 0);
     }
-    if(num2 >= 0) {
+    if (num2 >= 0) {
         // Write to select pins for mux 2
         digitalWrite(num2SelPins[0], (uint8_t) bitRead(num2, 0));
         digitalWrite(num2SelPins[1], (uint8_t) bitRead(num2, 1));
@@ -314,7 +315,7 @@ void SetRTCDateTime(tmElements_t &tm) {
         TimeDate[i] = a + (b << 4);
 
         digitalWrite(RTC_CHIP_SEL, LOW);
-        SPI.transfer((uint8_t) (i + 0x80));
+        SPI.transfer((uint8_t)(i + 0x80));
         SPI.transfer((uint8_t) TimeDate[i]);
         digitalWrite(RTC_CHIP_SEL, HIGH);
     }
@@ -329,7 +330,7 @@ void GetRTCDateTime(tmElements_t &tm) {
         if (i == 3)
             i++;
         digitalWrite(RTC_CHIP_SEL, LOW);
-        SPI.transfer((uint8_t) (i + 0x00));
+        SPI.transfer((uint8_t)(i + 0x00));
         unsigned int n = SPI.transfer(0x00);
         digitalWrite(RTC_CHIP_SEL, HIGH);
         int a = n & B00001111;
@@ -365,10 +366,10 @@ void GetRTCDateTime(tmElements_t &tm) {
     }
     SPI.setDataMode(SPI_MODE0);
 
-    tm.Year = (uint8_t) (dateTime[6] + 2000 - 1970); // Year
+    tm.Year = (uint8_t)(dateTime[6] + 2000 - 1970); // Year
     tm.Month = (uint8_t) dateTime[5]; // Month
     tm.Day = (uint8_t) dateTime[4]; // Day
-    tm.Hour = (uint8_t) (pm == 1 ? dateTime[2] + 12 : dateTime[2]); // Hour
+    tm.Hour = (uint8_t)(pm == 1 ? dateTime[2] + 12 : dateTime[2]); // Hour
     tm.Minute = (uint8_t) dateTime[1]; // Min
     tm.Second = (uint8_t) dateTime[0]; // Sec
 //    printTimeElements(tm);
@@ -379,82 +380,6 @@ void GetRTCDateTime(tmElements_t &tm) {
  * High Level Helper Functions
  */
 
-/*
- * © Francesco Potortì 2013 - GPLv3 - Revision: 1.13
- *
- * Send an NTP packet and wait for the response, return the Unix time
- *
- * To lower the memory footprint, no buffers are allocated for sending
- * and receiving the NTP packets.  Four bytes of memory are allocated
- * for transmision, the rest is random garbage collected from the data
- * memory segment, and the received packet is read one byte at a time.
- * The Unix time is returned, that is, seconds from 1970-01-01T00:00.
- */
-unsigned long inline ntpUnixTime(UDP &udp) {
-    static int udpInited = udp.begin(localUdpPort); // open socket on arbitrary port
-
-    const char timeServer[] = "pool.ntp.org";  // NTP server
-
-    // Only the first four bytes of an outgoing NTP packet need to be set
-    // appropriately, the rest can be whatever.
-    const long ntpFirstFourBytes = 0xEC0600E3; // NTP request header
-
-    // Fail if WiFiUdp.begin() could not init a socket
-    if (!udpInited) {
-        Serial.println("failed; could not init ntp socket");
-        return 0;
-    }
-
-    // Clear received data from possible stray received packets
-    udp.flush();
-
-    // Send an NTP request
-    if (!(udp.beginPacket(timeServer, 123) // 123 is the NTP port
-          && udp.write((byte *) &ntpFirstFourBytes, 48) == 48
-          && udp.endPacket())) {
-        Serial.println("failed; could not send ntp packet");
-        return 0;                // sending request failed
-    }
-
-    // Wait for response; check every pollIntv ms up to maxPoll times
-    const int pollIntv = 150;        // poll every this many ms
-    const byte maxPoll = 15;        // poll up to this many times
-    int pktLen;                // received packet length
-    for (byte i = 0; i < maxPoll; i++) {
-        if ((pktLen = udp.parsePacket()) == 48)
-            break;
-        delay(pollIntv);
-    }
-    if (pktLen != 48) {
-        Serial.println("failed; invalid ntp packet received");
-        return 0;                // no correct packet received
-    }
-    // Read and discard the first useless bytes
-    // Set useless to 32 for speed; set to 40 for accuracy.
-    const byte useless = 40;
-    for (byte i = 0; i < useless; ++i)
-        udp.read();
-
-    // Read the integer part of sending time
-    unsigned long time = udp.read();    // NTP time
-    for (byte i = 1; i < 4; i++)
-        time = time << 8 | udp.read();
-
-    // Round to the nearest second if we want accuracy
-    // The fractionary part is the next byte divided by 256: if it is
-    // greater than 500ms we round to the next second; we also account
-    // for an assumed network delay of 50ms, and (0.5-0.05)*256=115;
-    // additionally, we account for how much we delayed reading the packet
-    // since its arrival, which we assume on average to be pollIntv/2.
-    time += (udp.read() > 115 - pollIntv / 8);
-
-    // Discard the rest of the packet
-    udp.flush();
-
-    return time - 2208988800ul;        // convert NTP time to Unix time
-}
-
-
 TimeChangeRule usPDT = {"PDT", Second, Sun, Mar, 2, -420};
 TimeChangeRule usPST = {"PST", First, Sun, Nov, 2, -480};
 Timezone usPT(usPDT, usPST);
@@ -464,13 +389,14 @@ boolean UpdateRTCDateTime() {
     LEDOn(rgb);
 
     Serial.print("fetching ntp time...");
-    unsigned long unixTime = ntpUnixTime(udp);
-    if (unixTime == 0) {
+    if (!timeClient.update()) {
+        Serial.println("failed");
         return false;
     }
     Serial.println("done");
 
     // Parse utc timestamp into time elements and print it
+    time_t unixTime = (time_t) timeClient.getEpochTime();
     tmElements_t utcElements;
     breakTime(unixTime, utcElements);
     Serial.print("UTC: ");
@@ -577,11 +503,11 @@ int nextDisplay(int displayState) {
         case (0): // Currently Off
             return 2;
         case (2):  // Currently Time & Date
-            return  1;
+            return 1;
         case (1): // Currently Time Only
             return 0;  // returning 3 here enables the rolling digit
         case (3):  // Currently Rolling
-            return  0;
+            return 0;
     }
 }
 
@@ -642,6 +568,7 @@ void setup() {
     digitalWrite(RTC_CHIP_SEL, HIGH);
 
     Ethernet.begin(mac);
+    timeClient.begin();
 
     //Button Setup
     pinMode(BUTTON_PWR_PIN, OUTPUT);
@@ -684,9 +611,6 @@ void setup() {
 }
 
 
-boolean pressed = false;
-unsigned long pressed_time = 0;
-
 void loop() {
     beginning:
 
@@ -710,20 +634,29 @@ void loop() {
     }
 
     // Read button;
-    pressed = isButtonPressed();
-    if (pressed) {
+    if (isButtonPressed()) {
         // Button was pressed
-        pressed_time = millis();
-        while (pressed) {
+        unsigned long pressed_time = millis();
+        while (isButtonPressed()) {
             UpdateNixieTubeDateTime(_displayState, _tm);
             if ((millis() - pressed_time) > 1500) {
                 // Sync time from ntp source
                 _successState = UpdateRTCDateTime() ? 0 : 1;
+
+                // Wait for the button to be released
+                while (isButtonPressed()) {
+                    UpdateNixieTubeDateTime(_displayState, _tm);
+                }
                 goto beginning;
             }
-            pressed = isButtonPressed();
         }
         _displayState = nextDisplay(_displayState);
     }
+
+    // Update the time at 12 AM every day
+    if (_tm.Hour == 0 && _tm.Minute == 0 && _tm.Second == 0) {
+        _successState = UpdateRTCDateTime() ? 0 : 1;
+    }
+
     UpdateNixieTubeDateTime(_displayState, _tm);
 }
