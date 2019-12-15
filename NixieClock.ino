@@ -45,9 +45,18 @@ const uint8_t LED_GND_PIN = 8;
 const uint8_t LED_RED_PIN = 3;
 const uint8_t LED_GREEN_PIN = 6;
 const uint8_t LED_BLUE_PIN = 5;
+
+
+const uint8_t LED_STATE_IDLE = 0;
+const uint8_t LED_STATE_FAIL = 1;
+const uint8_t LED_STATE_SUCCESS = 2;
 const uint8_t LED_BLINK_DEFAULT = 5;
 const uint8_t LED_BLINK_INTERVAL = 100;
 
+const uint8_t DISPLAY_STATE_OFF = 0;
+const uint8_t DISPLAY_STATE_TIME = 1;
+const uint8_t DISPLAY_STATE_TIME_AND_DATE = 2;
+const uint8_t DISPLAY_STATE_DEBUG = 3;
 
 /*
  * Arduinix
@@ -98,7 +107,7 @@ void printNixieDisplay(nixieDisplay_t &digits) {
 /*
  * LED Helper Functions
  */
-void LEDOn(ledDisplay_t &rgb) {
+void LEDOn(rgbValues_t &rgb) {
     analogWrite(LED_RED_PIN, rgb.Red);
     analogWrite(LED_GREEN_PIN, rgb.Green);
     analogWrite(LED_BLUE_PIN, rgb.Blue);
@@ -114,7 +123,7 @@ void LEDOff() {
 int _ledState = LOW;
 long _previousMillis = 0;
 
-int LEDBlink(int blinks, ledDisplay_t &rgb) {
+int LEDBlink(int blinks, rgbValues_t &rgb) {
     unsigned long currentMillis = millis();
     if (currentMillis - _previousMillis > LED_BLINK_INTERVAL) {
         _previousMillis = currentMillis;
@@ -130,26 +139,26 @@ int LEDBlink(int blinks, ledDisplay_t &rgb) {
     return blinks;
 }
 
-ledDisplay_t getLEDColor(int displayState) {
-    ledDisplay_t rgb;
+rgbValues_t getLEDColor(int displayState) {
+    rgbValues_t rgb;
     switch (displayState) {
         default:
-        case (0): // Off
+        case (DISPLAY_STATE_OFF):
             rgb.Red = 5;
             rgb.Green = 0;
             rgb.Blue = 0;
             break;
-        case (1): // Time Only
+        case (DISPLAY_STATE_TIME):
             rgb.Red = 0;
             rgb.Green = 0;
             rgb.Blue = 5;
             break;
-        case (2):  // Time & Date
+        case (DISPLAY_STATE_TIME_AND_DATE):
             rgb.Red = 0;
             rgb.Green = 5;
             rgb.Blue = 0;
             break;
-        case (3):  // Rolling Digits
+        case (DISPLAY_STATE_DEBUG):  // Rolling Digits
             rgb.Red = 5;
             rgb.Green = 5;
             rgb.Blue = 5;
@@ -236,13 +245,11 @@ void displayNixieTubeDatePair(int anode, int num1, int num2) {
 }
 
 void DisplayNixieTubeDateTime(int displayState, nixieDisplay_t &digits) {
-//    printNixieDisplay(digits);
     switch (displayState) {
-        case (2):
-        case (3):
+        case (DISPLAY_STATE_DEBUG):
+            printNixieDisplay(digits);
+        case (DISPLAY_STATE_TIME_AND_DATE):
             // Display time
-            // displayNixieTubeTimePair(3, digits.UpperHour, 0);  old broken code
-            // displayNixieTubeTimePair(0, 0, digits.LowerHour);
             displayNixieTubeTimePair(3, digits.UpperHour, digits.LowerHour);
             displayNixieTubeTimePair(0, digits.UpperHour, digits.LowerHour);
             displayNixieTubeTimePair(1, digits.UpperMin, digits.LowerMin);
@@ -253,19 +260,19 @@ void DisplayNixieTubeDateTime(int displayState, nixieDisplay_t &digits) {
             displayNixieTubeDatePair(2, digits.UpperYear, digits.LowerYear);
             displayNixieTubeDatePair(3, digits.Dots, digits.Dots);
             break;
-        case (1):
-            // Disable date display
-            digitalWrite(ANODE_DATE_SEL_PINS[0], LOW);
-            digitalWrite(ANODE_DATE_SEL_PINS[1], LOW);
-            digitalWrite(ANODE_DATE_SEL_PINS[2], LOW);
-            digitalWrite(ANODE_DATE_SEL_PINS[3], LOW);
+        case (DISPLAY_STATE_TIME):
             // Display time
             displayNixieTubeTimePair(3, digits.UpperHour, 0);
             displayNixieTubeTimePair(0, 0, digits.LowerHour);
             displayNixieTubeTimePair(1, digits.UpperMin, digits.LowerMin);
             displayNixieTubeTimePair(2, digits.Colon, digits.Colon);
+            // Disable date display
+            digitalWrite(ANODE_DATE_SEL_PINS[0], LOW);
+            digitalWrite(ANODE_DATE_SEL_PINS[1], LOW);
+            digitalWrite(ANODE_DATE_SEL_PINS[2], LOW);
+            digitalWrite(ANODE_DATE_SEL_PINS[3], LOW);
             break;
-        case (0):
+        case (DISPLAY_STATE_OFF):
         default:
             // Disable date and dime displays
             digitalWrite(ANODE_TIME_SEL_PINS[0], LOW);
@@ -276,7 +283,6 @@ void DisplayNixieTubeDateTime(int displayState, nixieDisplay_t &digits) {
             digitalWrite(ANODE_DATE_SEL_PINS[1], LOW);
             digitalWrite(ANODE_DATE_SEL_PINS[2], LOW);
             digitalWrite(ANODE_DATE_SEL_PINS[3], LOW);
-
     }
 }
 
@@ -385,7 +391,7 @@ TimeChangeRule usPST = {"PST", First, Sun, Nov, 2, -480};
 Timezone usPT(usPDT, usPST);
 
 boolean UpdateRTCDateTime() {
-    ledDisplay_t rgb = {0, 0, 255};
+    rgbValues_t rgb = {0, 0, 255};
     LEDOn(rgb);
 
     Serial.print("fetching ntp time...");
@@ -425,7 +431,7 @@ const uint8_t totalTimes = 40;
 void UpdateNixieTubeDateTime(int displayState, tmElements_t &tm) {
     // Load the latest time from the RTC module
     nixieDisplay_t targetDigits;
-    if (displayState == 3) {
+    if (displayState == DISPLAY_STATE_DEBUG) {
         if (counter > 9) counter = 0;
         targetDigits.UpperYear = counter;
         targetDigits.LowerYear = counter;
@@ -492,22 +498,23 @@ void UpdateNixieTubeDateTime(int displayState, tmElements_t &tm) {
 /******************************************************************************/
 
 
-int _blinks = LED_BLINK_DEFAULT;
-int _displayState = 2; // 0: off, 1: time only, 2: time & date
-int _successState = 2; // 0: success, 1: fail, 2: idle
+int _blinksRemaining = LED_BLINK_DEFAULT;
+int _successState = LED_STATE_IDLE; // 0: success, 1: fail, 2: idle
+int _displayState = DISPLAY_STATE_OFF;
 tmElements_t _tm;
 
 int nextDisplay(int displayState) {
     switch (displayState) {
         default:
-        case (0): // Currently Off
-            return 2;
-        case (2):  // Currently Time & Date
-            return 1;
-        case (1): // Currently Time Only
-            return 0;  // returning 3 here enables the rolling digit
-        case (3):  // Currently Rolling
-            return 0;
+        case (DISPLAY_STATE_OFF):
+            return DISPLAY_STATE_TIME_AND_DATE;
+        case (DISPLAY_STATE_TIME_AND_DATE):
+            return DISPLAY_STATE_TIME;
+        case (DISPLAY_STATE_TIME):
+            return DISPLAY_STATE_OFF;
+
+        case (DISPLAY_STATE_DEBUG):
+            return DISPLAY_STATE_OFF;
     }
 }
 
@@ -517,7 +524,6 @@ unsigned long _lastDebounceTime = 0;
 unsigned long _debounceDelay = 25;
 
 boolean isButtonPressed() {
-//    boolean rv = false;
     boolean newButtonState = (boolean) digitalRead(BUTTON_DIO);
 
     // check to see if you just pressed the button
@@ -615,21 +621,21 @@ void loop() {
     beginning:
 
     //Set LED based on status last time sync or current idle state
-    if (_blinks == 0 && (_successState == 0 || _successState == 1)) {
+    if (_blinksRemaining == 0) {
         // We are done blinking, reset the number of blinks and set success state to idle
-        _successState = 2;
-        _blinks = LED_BLINK_DEFAULT;
-    } else if (_successState == 0) {
+        _successState = LED_STATE_IDLE;
+        _blinksRemaining = LED_BLINK_DEFAULT;
+    } else if (_successState == LED_STATE_SUCCESS) {
         // Bright green; Successful time sync
-        ledDisplay_t rgb = {0, 255, 0};
-        _blinks = LEDBlink(_blinks, rgb);
-    } else if (_successState == 1) {
+        rgbValues_t rgb = {0, 255, 0};
+        _blinksRemaining = LEDBlink(_blinksRemaining, rgb);
+    } else if (_successState == LED_STATE_FAIL) {
         // Bright red; Failed time sync
-        ledDisplay_t rgb = {255, 0, 0};
-        _blinks = LEDBlink(_blinks, rgb);
+        rgbValues_t rgb = {255, 0, 0};
+        _blinksRemaining = LEDBlink(_blinksRemaining, rgb);
     } else {
         // Standby
-        ledDisplay_t rgb = getLEDColor(_displayState);
+        rgbValues_t rgb = getLEDColor(_displayState);
         LEDOn(rgb);
     }
 
@@ -641,21 +647,22 @@ void loop() {
             UpdateNixieTubeDateTime(_displayState, _tm);
             if ((millis() - pressed_time) > 1500) {
                 // Sync time from ntp source
-                _successState = UpdateRTCDateTime() ? 0 : 1;
+                _successState = UpdateRTCDateTime() ? LED_STATE_SUCCESS : LED_STATE_FAIL;
 
                 // Wait for the button to be released
                 while (isButtonPressed()) {
                     UpdateNixieTubeDateTime(_displayState, _tm);
                 }
+
+                // If the button was held for more than 5s go into debug state.
+                if ((millis() - pressed_time) > 5000) {
+                    _displayState = DISPLAY_STATE_DEBUG;
+                }
+
                 goto beginning;
             }
         }
         _displayState = nextDisplay(_displayState);
-    }
-
-    // Update the time at 12 AM every day
-    if (_tm.Hour == 0 && _tm.Minute == 0 && _tm.Second == 0) {
-        _successState = UpdateRTCDateTime() ? 0 : 1;
     }
 
     UpdateNixieTubeDateTime(_displayState, _tm);

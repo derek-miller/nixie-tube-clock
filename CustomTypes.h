@@ -18,4 +18,4 @@ typedef struct {
     uint8_t Red;
     uint8_t Green;
     uint8_t Blue;
-} ledDisplay_t;
+} rgbValues_t;
