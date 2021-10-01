@@ -4,10 +4,10 @@ set(PROJECT_NAME NixieClock)
 project(${PROJECT_NAME})
 
 set(${CMAKE_PROJECT_NAME}_BOARD mega)
-set(${CMAKE_PROJECT_NAME}_PORT /dev/tty.usbmodem14401)
-set(${CMAKE_PROJECT_NAME}_SERIAL screen /dev/tty.usbmodem14401)
+set(${CMAKE_PROJECT_NAME}_PORT /dev/tty.usbmodem14301)
+set(${CMAKE_PROJECT_NAME}_SERIAL screen /dev/tty.usbmodem14301)
 
-set(${CMAKE_PROJECT_NAME}_ARDLIBS Timezone Time NTPClient)
+set(${CMAKE_PROJECT_NAME}_ARDLIBS Timezone TimeLib NTPClient)
 set(${CMAKE_PROJECT_NAME}_SKETCH NixieClock.ino)
 
 set(mega.build.mcu atmega2560)

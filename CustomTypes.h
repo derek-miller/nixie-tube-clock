@@ -9,8 +9,8 @@ typedef struct {
     uint8_t LowerHour;
     uint8_t UpperMin;
     uint8_t LowerMin;
-    uint8_t Colon;
-    uint8_t Dots;
+    bool Colon;
+    bool Dots;
     bool Initialized;
 } nixieDisplay_t;
 

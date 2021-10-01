@@ -3,7 +3,7 @@
 #include <SPI.h>
 
 // https://github.com/PaulStoffregen/Time
-#include <Time.h>
+#include <TimeLib.h>
 // https://github.com/JChristensen/Timezone
 #include <Timezone.h>
 // https://github.com/arduino-libraries/NTPClient
@@ -57,6 +57,10 @@ const uint8_t DISPLAY_STATE_OFF = 0;
 const uint8_t DISPLAY_STATE_TIME = 1;
 const uint8_t DISPLAY_STATE_TIME_AND_DATE = 2;
 const uint8_t DISPLAY_STATE_DEBUG = 3;
+
+const uint8_t IN_18_ON_TIME_DELAY = 2;
+const uint8_t IN_12_ON_TIME_DELAY = 1;
+const uint8_t INS_1_ON_TIME_DELAY = 2;
 
 /*
  * Arduinix
@@ -121,7 +125,7 @@ void LEDOff() {
 
 
 int _ledState = LOW;
-long _previousMillis = 0;
+unsigned long _previousMillis = 0;
 
 int LEDBlink(int blinks, rgbValues_t &rgb) {
     unsigned long currentMillis = millis();
@@ -176,6 +180,9 @@ uint8_t rollDigit(uint8_t digit) {
     return digit - 1;
 }
 
+long _previousColonOnSec = -1;
+unsigned long _previousColonOnMillis = 0;
+
 void tmElementsToNixieDisplay(tmElements_t &tm, nixieDisplay_t &digits) {
     uint8_t smallYear = (tm.Year + 1970) % 100;
     digits.LowerYear = smallYear % 10;
@@ -199,25 +206,38 @@ void tmElementsToNixieDisplay(tmElements_t &tm, nixieDisplay_t &digits) {
     digits.UpperMin = tm.Minute - digits.LowerMin;
     if (digits.UpperMin >= 10) digits.UpperMin = digits.UpperMin / 10;
 
-    digits.Dots = 0;
-    digits.Colon = 0;
+    digits.Dots = true;
+
+    unsigned long currentMillis = millis();
+    if (_previousColonOnSec != tm.Second) {
+        _previousColonOnMillis = currentMillis;
+        _previousColonOnSec = tm.Second;
+        digits.Colon = true;
+    } else if ((currentMillis - _previousColonOnMillis) < 500) {
+        digits.Colon = true;
+    } else {
+        digits.Colon = false;
+    }
+
     digits.Initialized = true;
 }
 
 void displayNixieTubeDigitPair(int anodeIndex, uint8_t *anodeSelPins,
                                int num1, uint8_t *num1SelPins,
-                               int num2, uint8_t *num2SelPins) {
+                               int num2, uint8_t *num2SelPins, int onTimeDelay) {
+    bool active = false;
     if (num1 >= 0) {
         // Write to select pins for mux 1
         digitalWrite(num1SelPins[0], (uint8_t) bitRead(num1, 0));
         digitalWrite(num1SelPins[1], (uint8_t) bitRead(num1, 1));
         digitalWrite(num1SelPins[2], (uint8_t) bitRead(num1, 2));
         digitalWrite(num1SelPins[3], (uint8_t) bitRead(num1, 3));
+        active = true;
     } else {
-        digitalWrite(num1SelPins[0], 0);
-        digitalWrite(num1SelPins[1], 0);
-        digitalWrite(num1SelPins[2], 0);
-        digitalWrite(num1SelPins[3], 0);
+        digitalWrite(num1SelPins[0], 1);
+        digitalWrite(num1SelPins[1], 1);
+        digitalWrite(num1SelPins[2], 1);
+        digitalWrite(num1SelPins[3], 1);
     }
     if (num2 >= 0) {
         // Write to select pins for mux 2
@@ -225,23 +245,54 @@ void displayNixieTubeDigitPair(int anodeIndex, uint8_t *anodeSelPins,
         digitalWrite(num2SelPins[1], (uint8_t) bitRead(num2, 1));
         digitalWrite(num2SelPins[2], (uint8_t) bitRead(num2, 2));
         digitalWrite(num2SelPins[3], (uint8_t) bitRead(num2, 3));
+        active = true;
     } else {
-        digitalWrite(num2SelPins[0], 0);
-        digitalWrite(num2SelPins[1], 0);
-        digitalWrite(num2SelPins[2], 0);
-        digitalWrite(num2SelPins[3], 0);
+        digitalWrite(num2SelPins[0], 1);
+        digitalWrite(num2SelPins[1], 1);
+        digitalWrite(num2SelPins[2], 1);
+        digitalWrite(num2SelPins[3], 1);
     }
-    digitalWrite(anodeSelPins[anodeIndex], HIGH);
-    delay(2);
+    if (active) {
+        digitalWrite(anodeSelPins[anodeIndex], HIGH);
+    }
+    delay(onTimeDelay);
     digitalWrite(anodeSelPins[anodeIndex], LOW);
 }
 
-void displayNixieTubeTimePair(int anode, int num1, int num2) {
-    displayNixieTubeDigitPair(anode, ANODE_TIME_SEL_PINS, num1, TIME_SEL_PINS_A, num2, TIME_SEL_PINS_B);
+void displayNixieTubeTimePair(int anode, int num1, int num2, int onTimeDelay) {
+    displayNixieTubeDigitPair(anode, ANODE_TIME_SEL_PINS, num1, TIME_SEL_PINS_A, num2, TIME_SEL_PINS_B, onTimeDelay);
 }
 
-void displayNixieTubeDatePair(int anode, int num1, int num2) {
-    displayNixieTubeDigitPair(anode, ANODE_DATE_SEL_PINS, num1, DATE_SEL_PINS_A, num2, DATE_SEL_PINS_B);
+void displayNixieTubeDatePair(int anode, int num1, int num2, int onTimeDelay) {
+    displayNixieTubeDigitPair(anode, ANODE_DATE_SEL_PINS, num1, DATE_SEL_PINS_A, num2, DATE_SEL_PINS_B, onTimeDelay);
+}
+
+void displayNixieTubeTime(nixieDisplay_t &digits) {
+    displayNixieTubeTimePair(0, digits.UpperHour, digits.LowerHour, IN_18_ON_TIME_DELAY);
+    displayNixieTubeTimePair(1, digits.UpperMin, digits.LowerMin, IN_18_ON_TIME_DELAY);
+    displayNixieTubeTimePair(2, digits.Colon ? 0 : -1, -1, INS_1_ON_TIME_DELAY);
+    // UNUSED displayNixieTubeTimePair(3, -1, -1, IN_18_ON_TIME_DELAY);
+}
+
+void turnOffNixieTubeTime() {
+    displayNixieTubeTimePair(0, -1, -1, IN_18_ON_TIME_DELAY);
+    displayNixieTubeTimePair(1, -1, -1, IN_18_ON_TIME_DELAY);
+    displayNixieTubeTimePair(2, -1, -1 , INS_1_ON_TIME_DELAY);
+    // UNUSED displayNixieTubeTimePair(3, -1, -1, IN_18_ON_TIME_DELAY);
+}
+
+void displayNixieTubeDate(nixieDisplay_t &digits) {
+    displayNixieTubeDatePair(0, digits.UpperMonth, digits.LowerMonth, IN_12_ON_TIME_DELAY);
+    displayNixieTubeDatePair(1, digits.UpperDay, digits.LowerDay, IN_12_ON_TIME_DELAY);
+    displayNixieTubeDatePair(2, digits.UpperYear, digits.LowerYear, IN_12_ON_TIME_DELAY);
+    displayNixieTubeDatePair(3, digits.Dots ? 0 : -1, digits.Dots ? 0 : -1, INS_1_ON_TIME_DELAY);
+}
+
+void turnOffNixieTubeDate() {
+    displayNixieTubeDatePair(0, -1, -1, IN_12_ON_TIME_DELAY);
+    displayNixieTubeDatePair(1, -1, -1, IN_12_ON_TIME_DELAY);
+    displayNixieTubeDatePair(2, -1, -1, IN_12_ON_TIME_DELAY);
+    displayNixieTubeDatePair(3, -1, -1, INS_1_ON_TIME_DELAY);
 }
 
 void DisplayNixieTubeDateTime(int displayState, nixieDisplay_t &digits) {
@@ -249,40 +300,17 @@ void DisplayNixieTubeDateTime(int displayState, nixieDisplay_t &digits) {
         case (DISPLAY_STATE_DEBUG):
             printNixieDisplay(digits);
         case (DISPLAY_STATE_TIME_AND_DATE):
-            // Display time
-            displayNixieTubeTimePair(3, digits.UpperHour, digits.LowerHour);
-            displayNixieTubeTimePair(0, digits.UpperHour, digits.LowerHour);
-            displayNixieTubeTimePair(1, digits.UpperMin, digits.LowerMin);
-            displayNixieTubeTimePair(2, digits.Colon, digits.Colon);
-            // Display date
-            displayNixieTubeDatePair(0, digits.UpperMonth, digits.LowerMonth);
-            displayNixieTubeDatePair(1, digits.UpperDay, digits.LowerDay);
-            displayNixieTubeDatePair(2, digits.UpperYear, digits.LowerYear);
-            displayNixieTubeDatePair(3, digits.Dots, digits.Dots);
+            displayNixieTubeTime(digits);
+            displayNixieTubeDate(digits);
             break;
         case (DISPLAY_STATE_TIME):
-            // Display time
-            displayNixieTubeTimePair(3, digits.UpperHour, 0);
-            displayNixieTubeTimePair(0, 0, digits.LowerHour);
-            displayNixieTubeTimePair(1, digits.UpperMin, digits.LowerMin);
-            displayNixieTubeTimePair(2, digits.Colon, digits.Colon);
-            // Disable date display
-            digitalWrite(ANODE_DATE_SEL_PINS[0], LOW);
-            digitalWrite(ANODE_DATE_SEL_PINS[1], LOW);
-            digitalWrite(ANODE_DATE_SEL_PINS[2], LOW);
-            digitalWrite(ANODE_DATE_SEL_PINS[3], LOW);
+            displayNixieTubeTime(digits);
+            turnOffNixieTubeDate();
             break;
         case (DISPLAY_STATE_OFF):
         default:
-            // Disable date and dime displays
-            digitalWrite(ANODE_TIME_SEL_PINS[0], LOW);
-            digitalWrite(ANODE_TIME_SEL_PINS[1], LOW);
-            digitalWrite(ANODE_TIME_SEL_PINS[2], LOW);
-            digitalWrite(ANODE_TIME_SEL_PINS[3], LOW);
-            digitalWrite(ANODE_DATE_SEL_PINS[0], LOW);
-            digitalWrite(ANODE_DATE_SEL_PINS[1], LOW);
-            digitalWrite(ANODE_DATE_SEL_PINS[2], LOW);
-            digitalWrite(ANODE_DATE_SEL_PINS[3], LOW);
+            turnOffNixieTubeTime();
+            turnOffNixieTubeDate();
     }
 }
 
@@ -321,7 +349,7 @@ void SetRTCDateTime(tmElements_t &tm) {
         TimeDate[i] = a + (b << 4);
 
         digitalWrite(RTC_CHIP_SEL, LOW);
-        SPI.transfer((uint8_t)(i + 0x80));
+        SPI.transfer((uint8_t) (i + 0x80));
         SPI.transfer((uint8_t) TimeDate[i]);
         digitalWrite(RTC_CHIP_SEL, HIGH);
     }
@@ -336,7 +364,7 @@ void GetRTCDateTime(tmElements_t &tm) {
         if (i == 3)
             i++;
         digitalWrite(RTC_CHIP_SEL, LOW);
-        SPI.transfer((uint8_t)(i + 0x00));
+        SPI.transfer((uint8_t) (i + 0x00));
         unsigned int n = SPI.transfer(0x00);
         digitalWrite(RTC_CHIP_SEL, HIGH);
         int a = n & B00001111;
@@ -372,10 +400,10 @@ void GetRTCDateTime(tmElements_t &tm) {
     }
     SPI.setDataMode(SPI_MODE0);
 
-    tm.Year = (uint8_t)(dateTime[6] + 2000 - 1970); // Year
+    tm.Year = (uint8_t) (dateTime[6] + 2000 - 1970); // Year
     tm.Month = (uint8_t) dateTime[5]; // Month
     tm.Day = (uint8_t) dateTime[4]; // Day
-    tm.Hour = (uint8_t)(pm == 1 ? dateTime[2] + 12 : dateTime[2]); // Hour
+    tm.Hour = (uint8_t) (pm == 1 ? dateTime[2] + 12 : dateTime[2]); // Hour
     tm.Minute = (uint8_t) dateTime[1]; // Min
     tm.Second = (uint8_t) dateTime[0]; // Sec
 //    printTimeElements(tm);
@@ -386,11 +414,11 @@ void GetRTCDateTime(tmElements_t &tm) {
  * High Level Helper Functions
  */
 
-TimeChangeRule usPDT = {"PDT", Second, Sun, Mar, 2, -420};
-TimeChangeRule usPST = {"PST", First, Sun, Nov, 2, -480};
-Timezone usPT(usPDT, usPST);
+TimeChangeRule usCDT = {"CDT", Second, Sun, Mar, 2, -300}; // UTC−05:00
+TimeChangeRule usCST = {"CST", First, Sun, Nov, 2, -360}; //  UTC−06:00
+Timezone usCT(usCDT, usCST);
 
-boolean UpdateRTCDateTime() {
+bool UpdateRTCDateTime() {
     rgbValues_t rgb = {0, 0, 255};
     LEDOn(rgb);
 
@@ -409,10 +437,10 @@ boolean UpdateRTCDateTime() {
     printTimeElements(utcElements);
 
     // Parse utc timestamp and convert it to local time
-    time_t local = usPT.toLocal(unixTime);
+    time_t local = usCT.toLocal(unixTime);
     tmElements_t ptElements;
     breakTime(local, ptElements);
-    Serial.print("PT: ");
+    Serial.print("CT: ");
     printTimeElements(ptElements);
 
     // Set RTC to updated time
@@ -443,8 +471,8 @@ void UpdateNixieTubeDateTime(int displayState, tmElements_t &tm) {
         targetDigits.LowerHour = counter;
         targetDigits.UpperMin = counter;
         targetDigits.LowerMin = counter;
-        targetDigits.Dots = 0;
-        targetDigits.Colon = 0;
+        targetDigits.Dots = counter % 2 == 0;
+        targetDigits.Colon = counter % 2 != 0;
         targetDigits.Initialized = true;
         if (numTimes == totalTimes) {
             numTimes = 0;
@@ -490,6 +518,12 @@ void UpdateNixieTubeDateTime(int displayState, tmElements_t &tm) {
     if (_currentDigits.LowerMin != targetDigits.LowerMin) {
         _currentDigits.LowerMin = rollDigit(_currentDigits.LowerMin);
     }
+    if (_currentDigits.Dots != targetDigits.Dots) {
+        _currentDigits.Dots = targetDigits.Dots;
+    }
+    if (_currentDigits.Colon != targetDigits.Colon) {
+        _currentDigits.Colon = targetDigits.Colon;
+    }
 
     DisplayNixieTubeDateTime(displayState, _currentDigits);
 }
@@ -511,20 +545,18 @@ int nextDisplay(int displayState) {
         case (DISPLAY_STATE_TIME_AND_DATE):
             return DISPLAY_STATE_TIME;
         case (DISPLAY_STATE_TIME):
-            return DISPLAY_STATE_OFF;
-
         case (DISPLAY_STATE_DEBUG):
             return DISPLAY_STATE_OFF;
     }
 }
 
-boolean _lastButtonState = HIGH;
-boolean _currentButtonState;
+bool _lastButtonState = HIGH;
+bool _currentButtonState;
 unsigned long _lastDebounceTime = 0;
 unsigned long _debounceDelay = 25;
 
-boolean isButtonPressed() {
-    boolean newButtonState = (boolean) digitalRead(BUTTON_DIO);
+bool isButtonPressed() {
+    bool newButtonState = (bool) digitalRead(BUTTON_DIO);
 
     // check to see if you just pressed the button
     // (i.e. the input went from LOW to HIGH),  and you've waited
