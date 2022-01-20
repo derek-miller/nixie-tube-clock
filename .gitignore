@@ -113,4 +113,8 @@ Mkfile.old
 dkms.conf
 
 # cMake
-/cmake-build-debug*
+/cmake-build-*
+
+# Platform IO
+.pio
+CMakeListsPrivate.txt
