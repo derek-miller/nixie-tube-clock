@@ -2,15 +2,12 @@
 #include <Ethernet.h>
 #include <SPI.h>
 
-// https://github.com/PaulStoffregen/Time
-#include <TimeLib.h>
-// https://github.com/JChristensen/Timezone
-#include <Timezone.h>
-// https://github.com/arduino-libraries/NTPClient
+#include <EthernetWebServer.h>
 #include <NTPClient.h>
+#include <TimeLib.h>
+#include <Timezone.h>
 
-#include <CustomTypes.h>
-
+#include <defines.hpp>
 
 /*******************************************************************************
  * CONFIGURE
@@ -21,6 +18,7 @@
 byte mac[] = {0x90, 0xA2, 0xDA, 0x00, 0xF8, 0x1A};
 EthernetUDP udp;
 NTPClient timeClient(udp);
+EthernetWebServer server(80);
 
 
 /*
@@ -112,9 +110,9 @@ void printNixieDisplay(nixieDisplay_t &digits) {
  * LED Helper Functions
  */
 void LEDOn(rgbValues_t &rgb) {
-    analogWrite(LED_RED_PIN, rgb.Red);
-    analogWrite(LED_GREEN_PIN, rgb.Green);
-    analogWrite(LED_BLUE_PIN, rgb.Blue);
+    analogWrite(LED_RED_PIN, rgb.red);
+    analogWrite(LED_GREEN_PIN, rgb.green);
+    analogWrite(LED_BLUE_PIN, rgb.blue);
 }
 
 void LEDOff() {
@@ -148,24 +146,24 @@ rgbValues_t getLEDColor(int displayState) {
     switch (displayState) {
         default:
         case (DISPLAY_STATE_OFF):
-            rgb.Red = 5;
-            rgb.Green = 0;
-            rgb.Blue = 0;
+            rgb.red = 5;
+            rgb.green = 0;
+            rgb.blue = 0;
             break;
         case (DISPLAY_STATE_TIME):
-            rgb.Red = 0;
-            rgb.Green = 0;
-            rgb.Blue = 5;
+            rgb.red = 0;
+            rgb.green = 0;
+            rgb.blue = 5;
             break;
         case (DISPLAY_STATE_TIME_AND_DATE):
-            rgb.Red = 0;
-            rgb.Green = 5;
-            rgb.Blue = 0;
+            rgb.red = 0;
+            rgb.green = 5;
+            rgb.blue = 0;
             break;
         case (DISPLAY_STATE_DEBUG):  // Rolling Digits
-            rgb.Red = 5;
-            rgb.Green = 5;
-            rgb.Blue = 5;
+            rgb.red = 5;
+            rgb.green = 5;
+            rgb.blue = 5;
             break;
     }
     return rgb;
@@ -608,6 +606,65 @@ void setup() {
     Ethernet.begin(mac);
     timeClient.begin();
 
+    // REST Server Setup
+    server.on(F("/display/status"), HTTP_GET, []()
+    {
+        String content = R"({"state": ")";
+        switch (_displayState) {
+            case DISPLAY_STATE_TIME_AND_DATE:
+                content += "time-and-date";
+                break;
+            case DISPLAY_STATE_TIME:
+                content += "time";
+                break;
+            case DISPLAY_STATE_DEBUG:
+                content += "debug";
+                break;
+            case DISPLAY_STATE_OFF:
+            default:
+                content += "off";
+                break;
+        }
+        content += R"("})";
+        server.send(200, F("application/json"), content);
+    });
+    server.on(F("/display/time-and-date"), HTTP_POST, []()
+    {
+        _displayState = DISPLAY_STATE_TIME_AND_DATE;
+        server.send(200, F("application/json"), "{}");
+    });
+    server.on(F("/display/time"), HTTP_POST, []()
+    {
+        _displayState = DISPLAY_STATE_TIME;
+        server.send(200, F("application/json"), "{}");
+    });
+    server.on(F("/display/debug"), HTTP_POST, []()
+    {
+        _displayState = DISPLAY_STATE_DEBUG;
+        server.send(200, F("application/json"), "{}");
+    });
+    server.on(F("/display/off"), HTTP_POST, []()
+    {
+        _displayState = DISPLAY_STATE_OFF;
+        server.send(200, F("application/json"), "{}");
+    });
+    server.on(F("/time/ntp-sync"), HTTP_POST, []()
+    {
+        bool success = UpdateRTCDateTime();
+        _successState = UpdateRTCDateTime() ? LED_STATE_SUCCESS : LED_STATE_FAIL;
+        String content = R"({"success": ")";
+        content += success ? "true": "false";
+        content += "\"}";
+        server.send(200, F("application/json"), content);
+    });
+    server.onNotFound([]()
+    {
+        server.send(404, F("application/json"), "{}");
+    });
+    server.begin();
+    Serial.print("Server is at ");
+    Serial.println(Ethernet.localIP());
+
     //Button Setup
     pinMode(BUTTON_PWR_PIN, OUTPUT);
     digitalWrite(BUTTON_PWR_PIN, HIGH);
@@ -651,6 +708,9 @@ void setup() {
 
 void loop() {
     beginning:
+
+    // Run the RestServer
+    server.handleClient();
 
     //Set LED based on status last time sync or current idle state
     if (_blinksRemaining == 0) {
