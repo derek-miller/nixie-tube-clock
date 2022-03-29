@@ -1,91 +1,104 @@
 #include <Arduino.h>
+#include <EEPROM.h>
 #include <Ethernet.h>
 #include <SPI.h>
 
+#define USE_ETHERNET_WRAPPER  true
+#define USE_ETHERNET          true
 #include <EthernetWebServer.h>
 #include <NTPClient.h>
 #include <TimeLib.h>
 #include <Timezone.h>
+#include <ds3234.h>
 
 #include <defines.hpp>
+
+
+namespace Constants {
+    /*
+     * LED
+     */
+    const static unsigned int LED_BLINK_COUNT = 5;
+    const static unsigned long LED_BLINK_INTERVAL = 100;
+
+    /*
+     * Nixie tube
+     */
+    const static unsigned long IN_18_ON_TIME_DELAY = 2;
+    const static unsigned long IN_12_ON_TIME_DELAY = 1;
+    const static unsigned long INS_1_ON_TIME_DELAY = 2;
+
+    /*
+     * Ethernet
+     */
+    static byte MAC_ADDRESS[] = {0x90, 0xA2, 0xDA, 0x00, 0xF8, 0x1A};
+    const static unsigned int SERVER_HTTP_PORT = 80;
+
+    const static unsigned int CLOCK_STATE_ADDR = 0;
+    const static ClockState DEFAULT_STATE = ClockState::DISPLAY_TIME_AND_DATE;
+}
+
+namespace Pins {
+    /*
+     * Real-time clock module
+     */
+    const static unsigned int RTC_SEL = 53;
+    const static unsigned int RTC_PWR = 48;
+
+    /*
+     * Button
+     */
+    const static unsigned int BUTTON_DIO = 2;
+    const static unsigned int BUTTON_PWR = 4;
+    const static unsigned int BUTTON_GND = 7;
+
+    /*
+     * Status LED
+     */
+    const static unsigned int LED_GND = 8;
+    const static unsigned int LED_RED = 3;
+    const static unsigned int LED_GREEN = 6;
+    const static unsigned int LED_BLUE = 5;
+
+    /*
+     * Arduinix
+     */
+    const static arduinixmux_t CATHODE_DATE_SEL_A = arduinixmux_t{23, 25, 27, 29};
+    const static arduinixmux_t CATHODE_DATE_SEL_B = arduinixmux_t{31, 33, 35, 37};
+    const static arduinixmux_t ANODE_DATE_SEL = arduinixmux_t{45, 43, 41, 39};
+
+    const static arduinixmux_t CATHODE_TIME_SEL_A = arduinixmux_t{22, 24, 26, 28};
+    const static arduinixmux_t CATHODE_TIME_SEL_B = arduinixmux_t{30, 32, 34, 36};
+    const static arduinixmux_t ANODE_TIME_SEL = arduinixmux_t{44, 42, 40, 38};
+}
 
 /*******************************************************************************
  * CONFIGURE
  ******************************************************************************/
+
 /*
  * Ethernet
  */
-byte mac[] = {0x90, 0xA2, 0xDA, 0x00, 0xF8, 0x1A};
 EthernetUDP udp;
 NTPClient timeClient(udp);
-EthernetWebServer server(80);
-
-
-/*
- * RTC
- */
-const uint8_t RTC_CHIP_SEL = 53;
-const uint8_t RTC_PWR_PIN = 48;
-
-
-/*
- * Button
- */
-const uint8_t BUTTON_DIO = 2;
-const uint8_t BUTTON_PWR_PIN = 4;
-const uint8_t BUTTON_GND_PIN = 7;
-
-
-/*
- * LED
- */
-const uint8_t LED_GND_PIN = 8;
-const uint8_t LED_RED_PIN = 3;
-const uint8_t LED_GREEN_PIN = 6;
-const uint8_t LED_BLUE_PIN = 5;
-
-
-const uint8_t LED_STATE_IDLE = 0;
-const uint8_t LED_STATE_FAIL = 1;
-const uint8_t LED_STATE_SUCCESS = 2;
-const uint8_t LED_BLINK_DEFAULT = 5;
-const uint8_t LED_BLINK_INTERVAL = 100;
-
-const uint8_t DISPLAY_STATE_OFF = 0;
-const uint8_t DISPLAY_STATE_TIME = 1;
-const uint8_t DISPLAY_STATE_TIME_AND_DATE = 2;
-const uint8_t DISPLAY_STATE_DEBUG = 3;
-
-const uint8_t IN_18_ON_TIME_DELAY = 2;
-const uint8_t IN_12_ON_TIME_DELAY = 1;
-const uint8_t INS_1_ON_TIME_DELAY = 2;
-
-/*
- * Arduinix
- */
-uint8_t DATE_SEL_PINS_A[] = {23, 25, 27, 29};
-uint8_t DATE_SEL_PINS_B[] = {31, 33, 35, 37};
-uint8_t TIME_SEL_PINS_A[] = {22, 24, 26, 28};
-uint8_t TIME_SEL_PINS_B[] = {30, 32, 34, 36};
-uint8_t ANODE_DATE_SEL_PINS[] = {45, 43, 41, 39};
-uint8_t ANODE_TIME_SEL_PINS[] = {44, 42, 40, 38};
-
+EthernetWebServer server(Constants::SERVER_HTTP_PORT);
 
 /*******************************************************************************
  * HELPER FUNCTIONS
  ******************************************************************************/
 void printTimeElements(tmElements_t &tm) {
-    Serial.print(tm.Year + 1970);
-    Serial.print("-");
-    Serial.print(tm.Month);
-    Serial.print("-");
-    Serial.print(tm.Day);
-    Serial.print("T");
-    Serial.print(tm.Hour);
-    Serial.print(":");
-    Serial.print(tm.Minute);
-    Serial.print(":");
-    Serial.println(tm.Second);
+    char s[20];
+    snprintf(
+            s,
+            sizeof(s),
+            "%04d-%02d-%02dT%02d:%02d:%02d", tmYearToCalendar(tm.Year + 1970),
+            tm.Month,
+            tm.Day,
+            tm.Hour,
+            tm.Minute,
+            tm.Second
+    );
+    Serial.println(s);
 }
 
 void printNixieDisplay(nixieDisplay_t &digits) {
@@ -110,25 +123,25 @@ void printNixieDisplay(nixieDisplay_t &digits) {
  * LED Helper Functions
  */
 void LEDOn(rgbValues_t &rgb) {
-    analogWrite(LED_RED_PIN, rgb.red);
-    analogWrite(LED_GREEN_PIN, rgb.green);
-    analogWrite(LED_BLUE_PIN, rgb.blue);
+    analogWrite(Pins::LED_RED, rgb.red);
+    analogWrite(Pins::LED_GREEN, rgb.green);
+    analogWrite(Pins::LED_BLUE, rgb.blue);
 }
 
 void LEDOff() {
-    analogWrite(LED_RED_PIN, 0);
-    analogWrite(LED_GREEN_PIN, 0);
-    analogWrite(LED_BLUE_PIN, 0);
+    analogWrite(Pins::LED_RED, 0);
+    analogWrite(Pins::LED_GREEN, 0);
+    analogWrite(Pins::LED_BLUE, 0);
 }
 
 
 int _ledState = LOW;
-unsigned long _previousMillis = 0;
+unsigned long _previousLedBlinkMillis = 0;
 
 int LEDBlink(int blinks, rgbValues_t &rgb) {
     unsigned long currentMillis = millis();
-    if (currentMillis - _previousMillis > LED_BLINK_INTERVAL) {
-        _previousMillis = currentMillis;
+    if (currentMillis - _previousLedBlinkMillis > Constants::LED_BLINK_INTERVAL) {
+        _previousLedBlinkMillis = currentMillis;
         if (_ledState == LOW) {
             _ledState = HIGH;
             LEDOn(rgb);
@@ -141,29 +154,29 @@ int LEDBlink(int blinks, rgbValues_t &rgb) {
     return blinks;
 }
 
-rgbValues_t getLEDColor(int displayState) {
+rgbValues_t getLEDColor(ClockState clockState) {
     rgbValues_t rgb;
-    switch (displayState) {
+    switch (clockState) {
+        case (ClockState::DISPLAY_TIME):
+            rgb.red = 0;
+            rgb.green = 0;
+            rgb.blue = 5;
+            break;
+        case (ClockState::DISPLAY_TIME_AND_DATE):
+            rgb.red = 0;
+            rgb.green = 5;
+            rgb.blue = 0;
+            break;
+        case (ClockState::DEBUG):  // Rolling Digits
+            rgb.red = 5;
+            rgb.green = 5;
+            rgb.blue = 5;
+            break;
+        case (ClockState::OFF):
         default:
-        case (DISPLAY_STATE_OFF):
             rgb.red = 5;
             rgb.green = 0;
             rgb.blue = 0;
-            break;
-        case (DISPLAY_STATE_TIME):
-            rgb.red = 0;
-            rgb.green = 0;
-            rgb.blue = 5;
-            break;
-        case (DISPLAY_STATE_TIME_AND_DATE):
-            rgb.red = 0;
-            rgb.green = 5;
-            rgb.blue = 0;
-            break;
-        case (DISPLAY_STATE_DEBUG):  // Rolling Digits
-            rgb.red = 5;
-            rgb.green = 5;
-            rgb.blue = 5;
             break;
     }
     return rgb;
@@ -220,92 +233,98 @@ void tmElementsToNixieDisplay(tmElements_t &tm, nixieDisplay_t &digits) {
     digits.Initialized = true;
 }
 
-void displayNixieTubeDigitPair(int anodeIndex, uint8_t *anodeSelPins,
-                               int num1, uint8_t *num1SelPins,
-                               int num2, uint8_t *num2SelPins, int onTimeDelay) {
+void displayNixieTubeDigitPair(unsigned int anodePin,
+                               int num1, arduinixmux_t num1SelPins,
+                               int num2, arduinixmux_t num2SelPins, unsigned long onTimeDelay) {
     bool active = false;
     if (num1 >= 0) {
         // Write to select pins for mux 1
-        digitalWrite(num1SelPins[0], (uint8_t) bitRead(num1, 0));
-        digitalWrite(num1SelPins[1], (uint8_t) bitRead(num1, 1));
-        digitalWrite(num1SelPins[2], (uint8_t) bitRead(num1, 2));
-        digitalWrite(num1SelPins[3], (uint8_t) bitRead(num1, 3));
+        digitalWrite(num1SelPins.sel0, (uint8_t) bitRead(num1, 0));
+        digitalWrite(num1SelPins.sel1, (uint8_t) bitRead(num1, 1));
+        digitalWrite(num1SelPins.sel2, (uint8_t) bitRead(num1, 2));
+        digitalWrite(num1SelPins.sel3, (uint8_t) bitRead(num1, 3));
         active = true;
     } else {
-        digitalWrite(num1SelPins[0], 1);
-        digitalWrite(num1SelPins[1], 1);
-        digitalWrite(num1SelPins[2], 1);
-        digitalWrite(num1SelPins[3], 1);
+        digitalWrite(num1SelPins.sel0, 1);
+        digitalWrite(num1SelPins.sel1, 1);
+        digitalWrite(num1SelPins.sel2, 1);
+        digitalWrite(num1SelPins.sel3, 1);
     }
     if (num2 >= 0) {
         // Write to select pins for mux 2
-        digitalWrite(num2SelPins[0], (uint8_t) bitRead(num2, 0));
-        digitalWrite(num2SelPins[1], (uint8_t) bitRead(num2, 1));
-        digitalWrite(num2SelPins[2], (uint8_t) bitRead(num2, 2));
-        digitalWrite(num2SelPins[3], (uint8_t) bitRead(num2, 3));
+        digitalWrite(num2SelPins.sel0, (uint8_t) bitRead(num2, 0));
+        digitalWrite(num2SelPins.sel1, (uint8_t) bitRead(num2, 1));
+        digitalWrite(num2SelPins.sel2, (uint8_t) bitRead(num2, 2));
+        digitalWrite(num2SelPins.sel3, (uint8_t) bitRead(num2, 3));
         active = true;
     } else {
-        digitalWrite(num2SelPins[0], 1);
-        digitalWrite(num2SelPins[1], 1);
-        digitalWrite(num2SelPins[2], 1);
-        digitalWrite(num2SelPins[3], 1);
+        digitalWrite(num2SelPins.sel0, 1);
+        digitalWrite(num2SelPins.sel1, 1);
+        digitalWrite(num2SelPins.sel2, 1);
+        digitalWrite(num2SelPins.sel3, 1);
     }
     if (active) {
-        digitalWrite(anodeSelPins[anodeIndex], HIGH);
+        digitalWrite(anodePin, HIGH);
     }
     delay(onTimeDelay);
-    digitalWrite(anodeSelPins[anodeIndex], LOW);
+    digitalWrite(anodePin, LOW);
 }
 
-void displayNixieTubeTimePair(int anode, int num1, int num2, int onTimeDelay) {
-    displayNixieTubeDigitPair(anode, ANODE_TIME_SEL_PINS, num1, TIME_SEL_PINS_A, num2, TIME_SEL_PINS_B, onTimeDelay);
+void displayNixieTubeTimePair(unsigned int anodePin, int num1, int num2, unsigned long onTimeDelay) {
+    displayNixieTubeDigitPair(anodePin, num1, Pins::CATHODE_TIME_SEL_A, num2, Pins::CATHODE_TIME_SEL_B, onTimeDelay);
 }
 
-void displayNixieTubeDatePair(int anode, int num1, int num2, int onTimeDelay) {
-    displayNixieTubeDigitPair(anode, ANODE_DATE_SEL_PINS, num1, DATE_SEL_PINS_A, num2, DATE_SEL_PINS_B, onTimeDelay);
+void displayNixieTubeDatePair(unsigned int anodePin, int num1, int num2, unsigned long onTimeDelay) {
+    displayNixieTubeDigitPair(anodePin, num1, Pins::CATHODE_DATE_SEL_A, num2, Pins::CATHODE_DATE_SEL_B, onTimeDelay);
 }
 
-void displayNixieTubeTime(nixieDisplay_t &digits) {
-    displayNixieTubeTimePair(0, digits.UpperHour, digits.LowerHour, IN_18_ON_TIME_DELAY);
-    displayNixieTubeTimePair(1, digits.UpperMin, digits.LowerMin, IN_18_ON_TIME_DELAY);
-    displayNixieTubeTimePair(2, digits.Colon ? 0 : -1, -1, INS_1_ON_TIME_DELAY);
-    // UNUSED displayNixieTubeTimePair(3, -1, -1, IN_18_ON_TIME_DELAY);
+void displayNixieTubeTime(nixieDisplay_t digits) {
+    displayNixieTubeTimePair(Pins::ANODE_TIME_SEL.sel0, digits.UpperHour, digits.LowerHour,
+                             Constants::IN_18_ON_TIME_DELAY);
+    displayNixieTubeTimePair(Pins::ANODE_TIME_SEL.sel1, digits.UpperMin, digits.LowerMin,
+                             Constants::IN_18_ON_TIME_DELAY);
+    displayNixieTubeTimePair(Pins::ANODE_TIME_SEL.sel2, digits.Colon ? 0 : -1, -1, Constants::INS_1_ON_TIME_DELAY);
+    // UNUSED displayNixieTubeTimePair(Pins::ANODE_TIME_SEL_PINS.sel3, -1, -1, IN_18_ON_TIME_DELAY);
 }
 
 void turnOffNixieTubeTime() {
-    displayNixieTubeTimePair(0, -1, -1, IN_18_ON_TIME_DELAY);
-    displayNixieTubeTimePair(1, -1, -1, IN_18_ON_TIME_DELAY);
-    displayNixieTubeTimePair(2, -1, -1 , INS_1_ON_TIME_DELAY);
-    // UNUSED displayNixieTubeTimePair(3, -1, -1, IN_18_ON_TIME_DELAY);
+    displayNixieTubeTimePair(Pins::ANODE_TIME_SEL.sel0, -1, -1, Constants::IN_18_ON_TIME_DELAY);
+    displayNixieTubeTimePair(Pins::ANODE_TIME_SEL.sel1, -1, -1, Constants::IN_18_ON_TIME_DELAY);
+    displayNixieTubeTimePair(Pins::ANODE_TIME_SEL.sel2, -1, -1, Constants::INS_1_ON_TIME_DELAY);
+    // UNUSED displayNixieTubeTimePair(Pins::ANODE_TIME_SEL_PINS.sel3, -1, -1, IN_18_ON_TIME_DELAY);
 }
 
 void displayNixieTubeDate(nixieDisplay_t &digits) {
-    displayNixieTubeDatePair(0, digits.UpperMonth, digits.LowerMonth, IN_12_ON_TIME_DELAY);
-    displayNixieTubeDatePair(1, digits.UpperDay, digits.LowerDay, IN_12_ON_TIME_DELAY);
-    displayNixieTubeDatePair(2, digits.UpperYear, digits.LowerYear, IN_12_ON_TIME_DELAY);
-    displayNixieTubeDatePair(3, digits.Dots ? 0 : -1, digits.Dots ? 0 : -1, INS_1_ON_TIME_DELAY);
+    displayNixieTubeDatePair(Pins::ANODE_DATE_SEL.sel0, digits.UpperMonth, digits.LowerMonth,
+                             Constants::IN_12_ON_TIME_DELAY);
+    displayNixieTubeDatePair(Pins::ANODE_DATE_SEL.sel1, digits.UpperDay, digits.LowerDay,
+                             Constants::IN_12_ON_TIME_DELAY);
+    displayNixieTubeDatePair(Pins::ANODE_DATE_SEL.sel2, digits.UpperYear, digits.LowerYear,
+                             Constants::IN_12_ON_TIME_DELAY);
+    displayNixieTubeDatePair(Pins::ANODE_DATE_SEL.sel3, digits.Dots ? 0 : -1, digits.Dots ? 0 : -1,
+                             Constants::INS_1_ON_TIME_DELAY);
 }
 
 void turnOffNixieTubeDate() {
-    displayNixieTubeDatePair(0, -1, -1, IN_12_ON_TIME_DELAY);
-    displayNixieTubeDatePair(1, -1, -1, IN_12_ON_TIME_DELAY);
-    displayNixieTubeDatePair(2, -1, -1, IN_12_ON_TIME_DELAY);
-    displayNixieTubeDatePair(3, -1, -1, INS_1_ON_TIME_DELAY);
+    displayNixieTubeDatePair(Pins::ANODE_DATE_SEL.sel0, -1, -1, Constants::IN_12_ON_TIME_DELAY);
+    displayNixieTubeDatePair(Pins::ANODE_DATE_SEL.sel1, -1, -1, Constants::IN_12_ON_TIME_DELAY);
+    displayNixieTubeDatePair(Pins::ANODE_DATE_SEL.sel2, -1, -1, Constants::IN_12_ON_TIME_DELAY);
+    displayNixieTubeDatePair(Pins::ANODE_DATE_SEL.sel3, -1, -1, Constants::INS_1_ON_TIME_DELAY);
 }
 
-void DisplayNixieTubeDateTime(int displayState, nixieDisplay_t &digits) {
-    switch (displayState) {
-        case (DISPLAY_STATE_DEBUG):
+void DisplayNixieTubeDateTime(ClockState clockState, nixieDisplay_t &digits) {
+    switch (clockState) {
+        case (ClockState::DEBUG):
             printNixieDisplay(digits);
-        case (DISPLAY_STATE_TIME_AND_DATE):
+        case (ClockState::DISPLAY_TIME_AND_DATE):
             displayNixieTubeTime(digits);
             displayNixieTubeDate(digits);
             break;
-        case (DISPLAY_STATE_TIME):
+        case (ClockState::DISPLAY_TIME):
             displayNixieTubeTime(digits);
             turnOffNixieTubeDate();
             break;
-        case (DISPLAY_STATE_OFF):
+        case (ClockState::OFF):
         default:
             turnOffNixieTubeTime();
             turnOffNixieTubeDate();
@@ -318,93 +337,36 @@ void DisplayNixieTubeDateTime(int displayState, nixieDisplay_t &digits) {
  */
 
 void SetRTCDateTime(tmElements_t &tm) {
+    struct ts time = {
+            tm.Second,
+            tm.Minute,
+            tm.Hour,
+            tm.Day,
+            tm.Month,
+            tmYearToCalendar(tm.Year),
+            tm.Wday,
+    };
+    // printTimeElements(tm);
+
     SPI.setDataMode(SPI_MODE3);
-    int TimeDate[7] = {tm.Second,
-                       tm.Minute,
-                       tm.Hour > 12 ? tm.Hour - 12 : tm.Hour,
-                       0,
-                       tm.Day,
-                       tm.Month,
-                       (tm.Year + 1970 - 2000)};
-    for (int i = 0; i <= 6; i++) {
-        if (i == 3)
-            i++;
-        int b = TimeDate[i] / 10;
-        int a = TimeDate[i] - b * 10;
-        if (i == 2) {
-            if (b == 1)
-                if (tm.Hour < 12)
-                    b = B0000101;
-                else
-                    b = B0000111;
-            else if (b == 0)
-                if (tm.Hour < 12)
-                    b = B0000100;
-                else
-                    b = B0000110;
-
-        }
-        TimeDate[i] = a + (b << 4);
-
-        digitalWrite(RTC_CHIP_SEL, LOW);
-        SPI.transfer((uint8_t) (i + 0x80));
-        SPI.transfer((uint8_t) TimeDate[i]);
-        digitalWrite(RTC_CHIP_SEL, HIGH);
-    }
+    DS3234_set(Pins::RTC_SEL, time);
     SPI.setDataMode(SPI_MODE0);
 }
 
 void GetRTCDateTime(tmElements_t &tm) {
+    struct ts t;
     SPI.setDataMode(SPI_MODE3);
-    int dateTime[7]; //second,minute,hour,null,day,month,year
-    int pm = 0;
-    for (int i = 0; i <= 6; i++) {
-        if (i == 3)
-            i++;
-        digitalWrite(RTC_CHIP_SEL, LOW);
-        SPI.transfer((uint8_t) (i + 0x00));
-        unsigned int n = SPI.transfer(0x00);
-        digitalWrite(RTC_CHIP_SEL, HIGH);
-        int a = n & B00001111;
-        if (i == 2) {
-            int b = (n & B01110000) >> 4;
-            if (b == B00000100) {
-                pm = 0;
-                b = 0;
-            } else if (b == B00000101) {
-                pm = 0;
-                b = 10;
-            } else if (b == B00000110) {
-                pm = 1;
-                b = 0;
-            } else {
-                pm = 1;
-                b = 10;
-            }
-            dateTime[i] = a + b;
-        } else if (i == 4) {
-            int b = (n & B00110000) >> 4;
-            dateTime[i] = a + b * 10;
-        } else if (i == 5) {
-            int b = (n & B00010000) >> 4;
-            dateTime[i] = a + b * 10;
-        } else if (i == 6) {
-            int b = (n & B11110000) >> 4;
-            dateTime[i] = a + b * 10;
-        } else {
-            int b = (n & B01110000) >> 4;
-            dateTime[i] = a + b * 10;
-        }
-    }
+    DS3234_get(Pins::RTC_SEL, &t);
     SPI.setDataMode(SPI_MODE0);
 
-    tm.Year = (uint8_t) (dateTime[6] + 2000 - 1970); // Year
-    tm.Month = (uint8_t) dateTime[5]; // Month
-    tm.Day = (uint8_t) dateTime[4]; // Day
-    tm.Hour = (uint8_t) (pm == 1 ? dateTime[2] + 12 : dateTime[2]); // Hour
-    tm.Minute = (uint8_t) dateTime[1]; // Min
-    tm.Second = (uint8_t) dateTime[0]; // Sec
-//    printTimeElements(tm);
+    tm.Second = t.sec;
+    tm.Minute = t.min;
+    tm.Hour = t.hour;
+    tm.Wday = t.wday;
+    tm.Day = t.mday;
+    tm.Month = t.mon;
+    tm.Year = CalendarYrToTm(t.year);
+    // printTimeElements(tm);
 }
 
 
@@ -428,36 +390,34 @@ bool UpdateRTCDateTime() {
     Serial.println("done");
 
     // Parse utc timestamp into time elements and print it
-    time_t unixTime = (time_t) timeClient.getEpochTime();
+    const unsigned long unixTime = timeClient.getEpochTime();
     tmElements_t utcElements;
     breakTime(unixTime, utcElements);
     Serial.print("UTC: ");
     printTimeElements(utcElements);
 
     // Parse utc timestamp and convert it to local time
-    time_t local = usCT.toLocal(unixTime);
-    tmElements_t ptElements;
-    breakTime(local, ptElements);
+    const unsigned long local = usCT.toLocal(unixTime);
+    tmElements_t localElements;
+    breakTime(local, localElements);
     Serial.print("CT: ");
-    printTimeElements(ptElements);
+    printTimeElements(localElements);
 
     // Set RTC to updated time
-    SetRTCDateTime(ptElements);
+    SetRTCDateTime(localElements);
     return true;
 }
 
 
 nixieDisplay_t _currentDigits;
-
-
 uint8_t counter = 0;
-uint8_t numTimes = 0;
-const uint8_t totalTimes = 40;
+uint8_t debugCycleCount = 0;
+const uint8_t debugDisplayCycles = 40;
 
-void UpdateNixieTubeDateTime(int displayState, tmElements_t &tm) {
+void UpdateNixieTubeDateTime(ClockState clockState, tmElements_t &tm) {
     // Load the latest time from the RTC module
     nixieDisplay_t targetDigits;
-    if (displayState == DISPLAY_STATE_DEBUG) {
+    if (clockState == ClockState::DEBUG) {
         if (counter > 9) counter = 0;
         targetDigits.UpperYear = counter;
         targetDigits.LowerYear = counter;
@@ -472,11 +432,11 @@ void UpdateNixieTubeDateTime(int displayState, tmElements_t &tm) {
         targetDigits.Dots = counter % 2 == 0;
         targetDigits.Colon = counter % 2 != 0;
         targetDigits.Initialized = true;
-        if (numTimes == totalTimes) {
-            numTimes = 0;
+        if (debugCycleCount == debugDisplayCycles) {
+            debugCycleCount = 0;
             counter++;
         } else {
-            numTimes++;
+            debugCycleCount++;
         }
     } else {
         GetRTCDateTime(tm);
@@ -523,30 +483,44 @@ void UpdateNixieTubeDateTime(int displayState, tmElements_t &tm) {
         _currentDigits.Colon = targetDigits.Colon;
     }
 
-    DisplayNixieTubeDateTime(displayState, _currentDigits);
+    DisplayNixieTubeDateTime(clockState, _currentDigits);
 }
 
 
 /******************************************************************************/
 
 
-int _blinksRemaining = LED_BLINK_DEFAULT;
-int _successState = LED_STATE_IDLE; // 0: success, 1: fail, 2: idle
-int _displayState = DISPLAY_STATE_OFF;
+int _blinksRemaining = Constants::LED_BLINK_COUNT;
+LedState _successState = LedState::IDLE;
 tmElements_t _tm;
 
-int nextDisplay(int displayState) {
-    switch (displayState) {
-        default:
-        case (DISPLAY_STATE_OFF):
-            return DISPLAY_STATE_TIME_AND_DATE;
-        case (DISPLAY_STATE_TIME_AND_DATE):
-            return DISPLAY_STATE_TIME;
-        case (DISPLAY_STATE_TIME):
-        case (DISPLAY_STATE_DEBUG):
-            return DISPLAY_STATE_OFF;
-    }
+ClockState setClockState(ClockState clockState) {
+    EEPROM.update(Constants::CLOCK_STATE_ADDR, (int) clockState);
+    return clockState;
 }
+
+ClockState getClockState() {
+    return static_cast<ClockState>(EEPROM.read(Constants::CLOCK_STATE_ADDR));
+}
+
+ClockState cycleClockState() {
+    ClockState clockState;
+    switch (getClockState()) {
+        default:
+        case (ClockState::OFF):
+            clockState = ClockState::DISPLAY_TIME_AND_DATE;
+            break;
+        case (ClockState::DISPLAY_TIME_AND_DATE):
+            clockState = ClockState::DISPLAY_TIME;
+            break;
+        case (ClockState::DISPLAY_TIME):
+        case (ClockState::DEBUG):
+            clockState = ClockState::OFF;
+            break;
+    }
+    return setClockState(clockState);
+}
+
 
 bool _lastButtonState = HIGH;
 bool _currentButtonState;
@@ -554,7 +528,7 @@ unsigned long _lastDebounceTime = 0;
 unsigned long _debounceDelay = 25;
 
 bool isButtonPressed() {
-    bool newButtonState = (bool) digitalRead(BUTTON_DIO);
+    bool newButtonState = (bool) digitalRead(Pins::BUTTON_DIO);
 
     // check to see if you just pressed the button
     // (i.e. the input went from LOW to HIGH),  and you've waited
@@ -582,132 +556,101 @@ bool isButtonPressed() {
 void setup() {
     Serial.begin(9600);
 
-    //LED Setup
-    pinMode(LED_GND_PIN, OUTPUT);
-    digitalWrite(LED_GND_PIN, LOW);
+    // LED Setup
+    pinMode(Pins::LED_GND, OUTPUT);
+    digitalWrite(Pins::LED_GND, LOW);
 
-    //RTC Setup
-    pinMode(RTC_CHIP_SEL, OUTPUT);
+    // RTC Setup
+    pinMode(Pins::RTC_PWR, OUTPUT);
+    digitalWrite(Pins::RTC_PWR, HIGH);
+    // Enable: Temperature Compensation
+    // Disable: Oscillator, Battery SQ wave, Alarms
+    DS3234_init(Pins::RTC_SEL, 0x60);
 
-    pinMode(RTC_PWR_PIN, OUTPUT);
-    digitalWrite(RTC_PWR_PIN, HIGH);
+    // Button Setup
+    pinMode(Pins::BUTTON_PWR, OUTPUT);
+    digitalWrite(Pins::BUTTON_PWR, HIGH);
+    pinMode(Pins::BUTTON_GND, OUTPUT);
+    digitalWrite(Pins::BUTTON_GND, LOW);
 
-    SPI.begin();
-    SPI.setBitOrder(MSBFIRST);
-    SPI.setDataMode(SPI_MODE3);
-    digitalWrite(RTC_CHIP_SEL, LOW);
-    // Access Control Register
-    SPI.transfer(0x8E);
-    // Disable:  Osciallator, Battery SQ wave, Alarms
-    SPI.transfer(0x60);
-    // Enable:  Temperature Compensation
-    digitalWrite(RTC_CHIP_SEL, HIGH);
+    // Arduinix Setup
+    const arduinixmux_t pinGroups[] = {
+            Pins::CATHODE_DATE_SEL_A,
+            Pins::CATHODE_DATE_SEL_B,
+            Pins::CATHODE_TIME_SEL_A,
+            Pins::CATHODE_TIME_SEL_B,
+            Pins::ANODE_DATE_SEL,
+            Pins::ANODE_TIME_SEL
+    };
+    for (arduinixmux_t pins: pinGroups) {
+        pinMode(pins.sel0, OUTPUT);
+        pinMode(pins.sel1, OUTPUT);
+        pinMode(pins.sel2, OUTPUT);
+        pinMode(pins.sel3, OUTPUT);
+    }
 
-    Ethernet.begin(mac);
+    // Ethernet Setup
+    EthernetInit();
+    Ethernet.begin(Constants::MAC_ADDRESS);
+    Serial.print("Clock has IP address: ");
+    Serial.println(Ethernet.localIP());
+
+    // NTP Setup
     timeClient.begin();
 
     // REST Server Setup
-    server.on(F("/display/status"), HTTP_GET, []()
-    {
+    server.on("/display/status", HTTP_GET, []() {
         String content = R"({"state": ")";
-        switch (_displayState) {
-            case DISPLAY_STATE_TIME_AND_DATE:
+        switch (getClockState()) {
+            case ClockState::DISPLAY_TIME_AND_DATE:
                 content += "time-and-date";
                 break;
-            case DISPLAY_STATE_TIME:
+            case ClockState::DISPLAY_TIME:
                 content += "time";
                 break;
-            case DISPLAY_STATE_DEBUG:
+            case ClockState::DEBUG:
                 content += "debug";
                 break;
-            case DISPLAY_STATE_OFF:
+            case ClockState::OFF:
             default:
                 content += "off";
                 break;
         }
         content += R"("})";
-        server.send(200, F("application/json"), content);
+        server.send(200, "application/json", content);
     });
-    server.on(F("/display/time-and-date"), HTTP_POST, []()
-    {
-        _displayState = DISPLAY_STATE_TIME_AND_DATE;
-        server.send(200, F("application/json"), "{}");
+    server.on("/display/time-and-date", HTTP_POST, []() {
+        setClockState(ClockState::DISPLAY_TIME_AND_DATE);
+        server.send(200, "application/json", "{}");
     });
-    server.on(F("/display/time"), HTTP_POST, []()
-    {
-        _displayState = DISPLAY_STATE_TIME;
-        server.send(200, F("application/json"), "{}");
+    server.on("/display/time", HTTP_POST, []() {
+        setClockState(ClockState::DISPLAY_TIME);
+        server.send(200, "application/json", "{}");
     });
-    server.on(F("/display/debug"), HTTP_POST, []()
-    {
-        _displayState = DISPLAY_STATE_DEBUG;
-        server.send(200, F("application/json"), "{}");
+    server.on("/display/debug", HTTP_POST, []() {
+        setClockState(ClockState::DEBUG);
+        server.send(200, "application/json", "{}");
     });
-    server.on(F("/display/off"), HTTP_POST, []()
-    {
-        _displayState = DISPLAY_STATE_OFF;
-        server.send(200, F("application/json"), "{}");
+    server.on("/display/off", HTTP_POST, []() {
+        setClockState(ClockState::OFF);
+        server.send(200, "application/json", "{}");
     });
-    server.on(F("/time/ntp-sync"), HTTP_POST, []()
-    {
+    server.on("/time/ntp-sync", HTTP_POST, []() {
         bool success = UpdateRTCDateTime();
-        _successState = UpdateRTCDateTime() ? LED_STATE_SUCCESS : LED_STATE_FAIL;
-        String content = R"({"success": ")";
-        content += success ? "true": "false";
-        content += "\"}";
-        server.send(200, F("application/json"), content);
+        _successState = UpdateRTCDateTime() ? LedState::SUCCESS : LedState::FAIL;
+        String content = R"({"success": )";
+        content += success ? "true" : "false";
+        content += "}";
+        server.send(200, "application/json", content);
     });
-    server.onNotFound([]()
-    {
-        server.send(404, F("application/json"), "{}");
+    server.onNotFound([]() {
+        server.send(404, "application/json", "{}");
     });
     server.begin();
-    Serial.print("Server is at ");
-    Serial.println(Ethernet.localIP());
-
-    //Button Setup
-    pinMode(BUTTON_PWR_PIN, OUTPUT);
-    digitalWrite(BUTTON_PWR_PIN, HIGH);
-
-    pinMode(BUTTON_GND_PIN, OUTPUT);
-    digitalWrite(BUTTON_GND_PIN, LOW);
-
-
-    //Arduinix Setup
-    pinMode(DATE_SEL_PINS_A[0], OUTPUT);
-    pinMode(DATE_SEL_PINS_A[1], OUTPUT);
-    pinMode(DATE_SEL_PINS_A[2], OUTPUT);
-    pinMode(DATE_SEL_PINS_A[3], OUTPUT);
-
-    pinMode(DATE_SEL_PINS_B[0], OUTPUT);
-    pinMode(DATE_SEL_PINS_B[1], OUTPUT);
-    pinMode(DATE_SEL_PINS_B[2], OUTPUT);
-    pinMode(DATE_SEL_PINS_B[3], OUTPUT);
-
-    pinMode(TIME_SEL_PINS_A[0], OUTPUT);
-    pinMode(TIME_SEL_PINS_A[1], OUTPUT);
-    pinMode(TIME_SEL_PINS_A[2], OUTPUT);
-    pinMode(TIME_SEL_PINS_A[3], OUTPUT);
-
-    pinMode(TIME_SEL_PINS_B[0], OUTPUT);
-    pinMode(TIME_SEL_PINS_B[1], OUTPUT);
-    pinMode(TIME_SEL_PINS_B[2], OUTPUT);
-    pinMode(TIME_SEL_PINS_B[3], OUTPUT);
-
-    pinMode(ANODE_DATE_SEL_PINS[0], OUTPUT);
-    pinMode(ANODE_DATE_SEL_PINS[1], OUTPUT);
-    pinMode(ANODE_DATE_SEL_PINS[2], OUTPUT);
-    pinMode(ANODE_DATE_SEL_PINS[3], OUTPUT);
-
-    pinMode(ANODE_TIME_SEL_PINS[0], OUTPUT);
-    pinMode(ANODE_TIME_SEL_PINS[1], OUTPUT);
-    pinMode(ANODE_TIME_SEL_PINS[2], OUTPUT);
-    pinMode(ANODE_TIME_SEL_PINS[3], OUTPUT);
 }
 
-
 void loop() {
-    beginning:
+    ClockState clockState = getClockState();
 
     // Run the RestServer
     server.handleClient();
@@ -715,47 +658,56 @@ void loop() {
     //Set LED based on status last time sync or current idle state
     if (_blinksRemaining == 0) {
         // We are done blinking, reset the number of blinks and set success state to idle
-        _successState = LED_STATE_IDLE;
-        _blinksRemaining = LED_BLINK_DEFAULT;
-    } else if (_successState == LED_STATE_SUCCESS) {
+        _successState = LedState::IDLE;
+        _blinksRemaining = Constants::LED_BLINK_COUNT;
+    } else if (_successState == LedState::SUCCESS) {
         // Bright green; Successful time sync
         rgbValues_t rgb = {0, 255, 0};
         _blinksRemaining = LEDBlink(_blinksRemaining, rgb);
-    } else if (_successState == LED_STATE_FAIL) {
+    } else if (_successState == LedState::FAIL) {
         // Bright red; Failed time sync
         rgbValues_t rgb = {255, 0, 0};
         _blinksRemaining = LEDBlink(_blinksRemaining, rgb);
     } else {
         // Standby
-        rgbValues_t rgb = getLEDColor(_displayState);
+        rgbValues_t rgb = getLEDColor(clockState);
         LEDOn(rgb);
     }
+
+    UpdateNixieTubeDateTime(clockState, _tm);
 
     // Read button;
     if (isButtonPressed()) {
         // Button was pressed
-        unsigned long pressed_time = millis();
+        unsigned long pressedTime = millis();
+        unsigned long pressedDuration = millis() - pressedTime;
+
         while (isButtonPressed()) {
-            UpdateNixieTubeDateTime(_displayState, _tm);
-            if ((millis() - pressed_time) > 1500) {
-                // Sync time from ntp source
-                _successState = UpdateRTCDateTime() ? LED_STATE_SUCCESS : LED_STATE_FAIL;
+            pressedDuration = millis() - pressedTime;
 
-                // Wait for the button to be released
-                while (isButtonPressed()) {
-                    UpdateNixieTubeDateTime(_displayState, _tm);
-                }
+            // Continue to update the nixie tubes
+            UpdateNixieTubeDateTime(clockState, _tm);
 
-                // If the button was held for more than 5s go into debug state.
-                if ((millis() - pressed_time) > 5000) {
-                    _displayState = DISPLAY_STATE_DEBUG;
-                }
-
-                goto beginning;
+            // Change the LED color indicating the action
+            if (pressedDuration > 6000) {
+                break;
+            } else if (pressedDuration > 5000) {
+                rgbValues_t rgb = {255, 255, 255};
+                LEDOn(rgb);
+            } else if (pressedDuration > 1500) {
+                rgbValues_t rgb = {0, 0, 255};
+                LEDOn(rgb);
             }
         }
-        _displayState = nextDisplay(_displayState);
-    }
 
-    UpdateNixieTubeDateTime(_displayState, _tm);
+        if (pressedDuration > 5000) {
+            // If the button was held for more than 5s go into debug state.
+            setClockState(ClockState::DEBUG);
+        } else if (pressedDuration > 1500) {
+            // Sync time from ntp source
+            _successState = UpdateRTCDateTime() ? LedState::SUCCESS : LedState::FAIL;
+        } else {
+            cycleClockState();
+        }
+    }
 }
