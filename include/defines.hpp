@@ -1,23 +1,17 @@
 #ifndef NIXIE_TUBE_CLOCK_DEFINES_H
 #define NIXIE_TUBE_CLOCK_DEFINES_H
 
-
 enum class ClockState {
     OFF,
     DISPLAY_TIME,
     DISPLAY_TIME_AND_DATE,
-    NTP_SYNC_PENDING,
-    NTP_SYNC_SUCCESS,
-    NTP_SYNC_FAIL,
     DEBUG,
 };
 
 enum class LedState {
-    OFF,
     IDLE,
-    ALERT,
-    BLINK_ON,
-    BLINK_OFF,
+    FAIL,
+    SUCCESS,
 };
 
 typedef struct {
