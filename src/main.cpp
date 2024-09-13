@@ -3,10 +3,11 @@
 #include <Ethernet.h>
 #include <SPI.h>
 
-#define USE_ETHERNET_WRAPPER  true
-#define USE_ETHERNET          true
-
+#define USE_ETHERNET_WRAPPER            true
+#define USE_ETHERNET                    true
+#define _ETHERNET_WEBSERVER_LOGLEVEL_   0
 #include <EthernetWebServer.h>
+#include <EthernetHttpClient.h>
 #include <NTPClient.h>
 #include <TimeLib.h>
 #include <Timezone.h>
@@ -22,6 +23,20 @@ namespace Constants {
     const static unsigned int LED_BLINK_COUNT = 5;
     const static unsigned long LED_BLINK_INTERVAL = 100;
 
+    const static rgbValues_t LED_COLOR_RED_BRIGHT = {255, 0, 0};
+    const static rgbValues_t LED_COLOR_RED_DULL = {5, 0, 0};
+    const static rgbValues_t LED_COLOR_GREEN_BRIGHT = {0, 255, 0};
+    const static rgbValues_t LED_COLOR_GREEN_DULL = {0, 5, 0};
+    const static rgbValues_t LED_COLOR_BLUE_BRIGHT = {0, 0, 255};
+    const static rgbValues_t LED_COLOR_BLUE_DULL = {0, 0, 5};
+    const static rgbValues_t LED_COLOR_YELLOW_BRIGHT = {255, 255, 0};
+    const static rgbValues_t LED_COLOR_YELLOW_DULL = {5, 5, 0};
+    const static rgbValues_t LED_COLOR_CYAN_BRIGHT = {0, 255, 255};
+    const static rgbValues_t LED_COLOR_CYAN_DULL = {0, 5, 5};
+    const static rgbValues_t LED_COLOR_PINK_BRIGHT = {255, 0, 255};
+    const static rgbValues_t LED_COLOR_PINK_DULL = {5, 0, 5};
+    const static rgbValues_t LED_COLOR_OFF = {0, 0, 0};
+
     /*
      * Nixie tube
      */
@@ -36,7 +51,6 @@ namespace Constants {
     const static unsigned int SERVER_HTTP_PORT = 80;
 
     const static unsigned int CLOCK_STATE_ADDR = 0;
-    const static ClockState DEFAULT_STATE = ClockState::DISPLAY_TIME_AND_DATE;
 }
 
 namespace Pins {
@@ -81,8 +95,10 @@ namespace Pins {
  * Ethernet
  */
 EthernetUDP udp;
-NTPClient timeClient(udp);
+NTPClient timeClient(udp, "time.cloudflare.com");
 EthernetWebServer server(Constants::SERVER_HTTP_PORT);
+EthernetClient control4Client;
+EthernetHttpClient httpControl4Client(control4Client, "192.168.2.10", 50015);
 
 /*******************************************************************************
  * HELPER FUNCTIONS
@@ -92,7 +108,7 @@ void printTimeElements(tmElements_t &tm) {
     snprintf(
             s,
             sizeof(s),
-            "%04d-%02d-%02dT%02d:%02d:%02d", tmYearToCalendar(tm.Year + 1970),
+            "%04d-%02d-%02dT%02d:%02d:%02d", tmYearToCalendar(tm.Year),
             tm.Month,
             tm.Day,
             tm.Hour,
@@ -123,64 +139,48 @@ void printNixieDisplay(nixieDisplay_t &digits) {
 /*
  * LED Helper Functions
  */
-void LEDOn(rgbValues_t &rgb) {
+void setLedColor(rgbValues_t rgb) {
     analogWrite(Pins::LED_RED, rgb.red);
     analogWrite(Pins::LED_GREEN, rgb.green);
     analogWrite(Pins::LED_BLUE, rgb.blue);
 }
 
-void LEDOff() {
-    analogWrite(Pins::LED_RED, 0);
-    analogWrite(Pins::LED_GREEN, 0);
-    analogWrite(Pins::LED_BLUE, 0);
+void setLedOff() {
+    setLedColor(Constants::LED_COLOR_OFF);
 }
 
 
 int _ledState = LOW;
 unsigned long _previousLedBlinkMillis = 0;
 
-int LEDBlink(int blinks, rgbValues_t &rgb) {
+int LEDBlink(int blinks, rgbValues_t rgb) {
     unsigned long currentMillis = millis();
     if (currentMillis - _previousLedBlinkMillis > Constants::LED_BLINK_INTERVAL) {
         _previousLedBlinkMillis = currentMillis;
         if (_ledState == LOW) {
             _ledState = HIGH;
-            LEDOn(rgb);
+            setLedColor(rgb);
             blinks--;
         } else {
             _ledState = LOW;
-            LEDOff();
+            setLedOff();
         }
     }
     return blinks;
 }
 
 rgbValues_t getLEDColor(ClockState clockState) {
-    rgbValues_t rgb;
     switch (clockState) {
         case (ClockState::DISPLAY_TIME):
-            rgb.red = 0;
-            rgb.green = 0;
-            rgb.blue = 5;
-            break;
+            return Constants::LED_COLOR_YELLOW_DULL;
         case (ClockState::DISPLAY_TIME_AND_DATE):
-            rgb.red = 0;
-            rgb.green = 5;
-            rgb.blue = 0;
-            break;
+            return Constants::LED_COLOR_GREEN_DULL;
         case (ClockState::DEBUG):  // Rolling Digits
-            rgb.red = 5;
-            rgb.green = 5;
-            rgb.blue = 5;
-            break;
+            return Constants::LED_COLOR_CYAN_DULL;
         case (ClockState::OFF):
         default:
-            rgb.red = 5;
-            rgb.green = 0;
-            rgb.blue = 0;
-            break;
+            return Constants::LED_COLOR_RED_DULL;
     }
-    return rgb;
 }
 
 
@@ -196,7 +196,7 @@ long _previousColonOnSec = -1;
 unsigned long _previousColonOnMillis = 0;
 
 void tmElementsToNixieDisplay(tmElements_t &tm, nixieDisplay_t &digits) {
-    uint8_t smallYear = (tm.Year + 1970) % 100;
+    uint8_t smallYear = tmYearToCalendar(tm.Year) % 100;
     digits.LowerYear = smallYear % 10;
     digits.UpperYear = smallYear - digits.LowerYear;
     if (digits.UpperYear >= 10) digits.UpperYear = digits.UpperYear / 10;
@@ -367,7 +367,6 @@ void GetRTCDateTime(tmElements_t &tm) {
     tm.Day = t.mday;
     tm.Month = t.mon;
     tm.Year = CalendarYrToTm(t.year);
-    // printTimeElements(tm);
 }
 
 
@@ -379,14 +378,13 @@ TimeChangeRule usCDT = {"CDT", Second, Sun, Mar, 2, -300}; // UTC−05:00
 TimeChangeRule usCST = {"CST", First, Sun, Nov, 2, -360}; //  UTC−06:00
 Timezone usCT(usCDT, usCST);
 
-bool UpdateRTCDateTime() {
-    rgbValues_t rgb = {0, 0, 255};
-    LEDOn(rgb);
+LedState UpdateRTCDateTime() {
+    setLedColor(Constants::LED_COLOR_BLUE_BRIGHT);
 
     Serial.print("fetching ntp time...");
     if (!timeClient.update()) {
         Serial.println("failed");
-        return false;
+        return LedState::FAIL;
     }
     Serial.println("done");
 
@@ -406,7 +404,7 @@ bool UpdateRTCDateTime() {
 
     // Set RTC to updated time
     SetRTCDateTime(localElements);
-    return true;
+    return LedState::SUCCESS;
 }
 
 
@@ -495,16 +493,68 @@ int _blinksRemaining = Constants::LED_BLINK_COUNT;
 LedState _successState = LedState::IDLE;
 tmElements_t _tm;
 
-ClockState setClockState(ClockState clockState) {
-    EEPROM.update(Constants::CLOCK_STATE_ADDR, (int) clockState);
-    return clockState;
-}
-
 ClockState getClockState() {
     return static_cast<ClockState>(EEPROM.read(Constants::CLOCK_STATE_ADDR));
 }
 
-ClockState cycleClockState() {
+LedState sendC4ClockStateUpdate() {
+    setLedColor(Constants::LED_COLOR_BLUE_BRIGHT);
+    Serial.print("Sending update to Control4...");
+    if (getClockState() == ClockState::OFF) {
+        httpControl4Client.get("/nixieTubeClockSetStateOff");
+    } else {
+        httpControl4Client.get("/nixieTubeClockSetStateOn");
+    }
+    int statusCode = httpControl4Client.responseStatusCode();
+    String responseBody = httpControl4Client.responseBody();
+    if (statusCode == 200) {
+        Serial.println("done");
+        return LedState::SUCCESS;
+    } else {
+        Serial.println("failed");
+        Serial.print("   Status Code: ");
+        Serial.println(statusCode);
+        Serial.print("   Response: ");
+        Serial.println(responseBody);
+        return LedState::FAIL;
+    }
+}
+
+LedState sendC4NtpSyncCompleteUpdate() {
+    setLedColor(Constants::LED_COLOR_BLUE_BRIGHT);
+    Serial.print("Sending NTP sync complete to Control4...");
+    httpControl4Client.get("/nixieTubeClockNtpSyncComplete");
+    int statusCode = httpControl4Client.responseStatusCode();
+    String responseBody = httpControl4Client.responseBody();
+    if (statusCode == 200) {
+        Serial.println("done");
+        return LedState::SUCCESS;
+    } else {
+        Serial.println("failed");
+        Serial.print("   Status Code: ");
+        Serial.println(statusCode);
+        Serial.print("   Response: ");
+        Serial.println(responseBody);
+        return LedState::FAIL;
+    }
+}
+
+LedState setClockState(ClockState clockState, bool skipC4Update) {
+    ClockState currentClockState = getClockState();
+    if (clockState != currentClockState) {
+        EEPROM.update(Constants::CLOCK_STATE_ADDR, (int) clockState);
+        if (!skipC4Update && (currentClockState == ClockState::OFF || clockState == ClockState::OFF)) {
+            return sendC4ClockStateUpdate();
+        }
+    }
+    return LedState::IDLE;
+}
+
+LedState setClockState(ClockState clockState) {
+    return setClockState(clockState, false);
+}
+
+LedState cycleClockState() {
     ClockState clockState;
     switch (getClockState()) {
         default:
@@ -554,6 +604,52 @@ bool isButtonPressed() {
     return _currentButtonState == LOW;
 }
 
+void printRequest() {
+    HTTPMethod method = server.method();
+    String methodStr;
+    if (method == HTTP_HEAD) {
+        methodStr = "HEAD";
+    } else if (method == HTTP_POST) {
+        methodStr = "POST";
+    } else if (method == HTTP_DELETE) {
+        methodStr = "DELETE";
+    } else if (method == HTTP_OPTIONS) {
+        methodStr = "OPTIONS";
+    } else if (method == HTTP_PUT) {
+        methodStr = "PUT";
+    } else if (method == HTTP_PATCH) {
+        methodStr = "PATCH";
+    } else {
+        methodStr = "UNKNOWN";
+    }
+    Serial.print(methodStr);
+    Serial.print(" ");
+    Serial.print(server.uri());
+    if (server.args() > 0) {
+        Serial.print('?');
+    }
+    for (int i = 0; i < server.args(); ++i) {
+        Serial.print(server.argName(i));
+        Serial.print("=");
+        if (server.arg(i) == nullptr) {
+            Serial.print("<null>");
+        } else if (server.arg(i).equals("")) {
+            Serial.print("<empty>");
+        } else {
+            Serial.print(server.arg(i));
+        }
+        if (i != server.args() - 1) {
+            Serial.print("&");
+        }
+    }
+    Serial.println(" HTTP/1.1");
+    for (int i = 0; i < server.headers(); ++i) {
+        Serial.print(server.headerName(i));
+        Serial.print(": ");
+        Serial.println(server.header(i));
+    }
+}
+
 void setup() {
     Serial.begin(9600);
 
@@ -591,10 +687,12 @@ void setup() {
     }
 
     // Ethernet Setup
-    EthernetInit();
     Ethernet.begin(Constants::MAC_ADDRESS);
     Serial.print("Clock has IP address: ");
     Serial.println(Ethernet.localIP());
+
+    // Ethernet Web Server Setup
+    EthernetInit();
 
     // NTP Setup
     timeClient.begin();
@@ -621,33 +719,43 @@ void setup() {
         server.send(200, "application/json", content);
     });
     server.on("/display/time-and-date", HTTP_POST, []() {
-        setClockState(ClockState::DISPLAY_TIME_AND_DATE);
+        printRequest();
+        setClockState(ClockState::DISPLAY_TIME_AND_DATE, server.arg("source").equals("control4"));
         server.send(200, "application/json", "{}");
     });
     server.on("/display/time", HTTP_POST, []() {
-        setClockState(ClockState::DISPLAY_TIME);
+        printRequest();
+        setClockState(ClockState::DISPLAY_TIME, server.arg("source").equals("control4"));
         server.send(200, "application/json", "{}");
     });
     server.on("/display/debug", HTTP_POST, []() {
-        setClockState(ClockState::DEBUG);
+        printRequest();
+        setClockState(ClockState::DEBUG, server.arg("source").equals("control4"));
         server.send(200, "application/json", "{}");
     });
     server.on("/display/off", HTTP_POST, []() {
-        setClockState(ClockState::OFF);
+        printRequest();
+        setClockState(ClockState::OFF, server.arg("source").equals("control4"));
         server.send(200, "application/json", "{}");
     });
     server.on("/time/ntp-sync", HTTP_POST, []() {
-        bool success = UpdateRTCDateTime();
-        _successState = UpdateRTCDateTime() ? LedState::SUCCESS : LedState::FAIL;
+        printRequest();
+        _successState = UpdateRTCDateTime();
         String content = R"({"success": )";
-        content += success ? "true" : "false";
+        content += _successState == LedState::IDLE || _successState == LedState::SUCCESS ? "true" : "false";
         content += "}";
         server.send(200, "application/json", content);
+        if (server.arg("source").equals("control4")) {
+            sendC4NtpSyncCompleteUpdate();
+        }
     });
     server.onNotFound([]() {
         server.send(404, "application/json", "{}");
     });
     server.begin();
+
+    httpControl4Client.setHttpResponseTimeout(5000L);
+    httpControl4Client.setTimeout(1000L);
 }
 
 void loop() {
@@ -663,16 +771,13 @@ void loop() {
         _blinksRemaining = Constants::LED_BLINK_COUNT;
     } else if (_successState == LedState::SUCCESS) {
         // Bright green; Successful time sync
-        rgbValues_t rgb = {0, 255, 0};
-        _blinksRemaining = LEDBlink(_blinksRemaining, rgb);
+        _blinksRemaining = LEDBlink(_blinksRemaining, Constants::LED_COLOR_GREEN_BRIGHT);
     } else if (_successState == LedState::FAIL) {
         // Bright red; Failed time sync
-        rgbValues_t rgb = {255, 0, 0};
-        _blinksRemaining = LEDBlink(_blinksRemaining, rgb);
+        _blinksRemaining = LEDBlink(_blinksRemaining, Constants::LED_COLOR_RED_BRIGHT);
     } else {
         // Standby
-        rgbValues_t rgb = getLEDColor(clockState);
-        LEDOn(rgb);
+        setLedColor(getLEDColor(clockState));
     }
 
     UpdateNixieTubeDateTime(clockState, _tm);
@@ -682,6 +787,8 @@ void loop() {
         // Button was pressed
         unsigned long pressedTime = millis();
         unsigned long pressedDuration = millis() - pressedTime;
+
+        setLedOff();
 
         while (isButtonPressed()) {
             pressedDuration = millis() - pressedTime;
@@ -693,22 +800,20 @@ void loop() {
             if (pressedDuration > 6000) {
                 break;
             } else if (pressedDuration > 5000) {
-                rgbValues_t rgb = {255, 255, 255};
-                LEDOn(rgb);
+                setLedColor(Constants::LED_COLOR_CYAN_DULL);
             } else if (pressedDuration > 1500) {
-                rgbValues_t rgb = {0, 0, 255};
-                LEDOn(rgb);
+                setLedColor(Constants::LED_COLOR_BLUE_DULL);
             }
         }
 
         if (pressedDuration > 5000) {
             // If the button was held for more than 5s go into debug state.
-            setClockState(ClockState::DEBUG);
+            _successState = setClockState(ClockState::DEBUG);
         } else if (pressedDuration > 1500) {
             // Sync time from ntp source
-            _successState = UpdateRTCDateTime() ? LedState::SUCCESS : LedState::FAIL;
+            _successState = UpdateRTCDateTime();
         } else {
-            cycleClockState();
+            _successState = cycleClockState();
         }
     }
 }
