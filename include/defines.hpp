@@ -3,14 +3,15 @@
 
 enum class ClockState {
     OFF,
-    DISPLAY_TIME,
-    DISPLAY_TIME_AND_DATE,
+    ON,
     DEBUG,
+    TIME_SYNC
 };
 
 enum class LedState {
     IDLE,
     FAIL,
+    PENDING,
     SUCCESS,
 };
 
