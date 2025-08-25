@@ -4,6 +4,7 @@
 enum class ClockState {
     OFF,
     ON,
+    ON_STATIC,
     DEBUG,
     TIME_SYNC
 };

@@ -30,7 +30,7 @@ namespace Constants {
     static constexpr rgbValues_t LED_COLOR_BLUE_BRIGHT = {0, 0, 255};
     static constexpr rgbValues_t LED_COLOR_BLUE_DULL = {0, 0, 5};
     // static constexpr rgbValues_t LED_COLOR_YELLOW_BRIGHT = {255, 255, 0};
-    // static constexpr rgbValues_t LED_COLOR_YELLOW_DULL = {5, 5, 0};
+    static constexpr rgbValues_t LED_COLOR_YELLOW_DULL = {5, 5, 0};
     // static constexpr rgbValues_t LED_COLOR_CYAN_BRIGHT = {0, 255, 255};
     static constexpr rgbValues_t LED_COLOR_CYAN_DULL = {0, 5, 5};
     // static constexpr rgbValues_t LED_COLOR_PINK_BRIGHT = {255, 0, 255};
@@ -148,6 +148,8 @@ const char *convertClockState(const ClockState clockState) {
     switch (clockState) {
         case ClockState::ON:
             return "on";
+        case ClockState::ON_STATIC:
+            return "on_static";
         case ClockState::DEBUG:
             return "debug";
         case ClockState::TIME_SYNC:
@@ -161,6 +163,9 @@ const char *convertClockState(const ClockState clockState) {
 ClockState convertClockState(const char *clockState) {
     if (strcmp(clockState, "on") == 0) {
         return ClockState::ON;
+    }
+    if (strcmp(clockState, "on_static") == 0) {
+        return ClockState::ON_STATIC;
     }
     if (strcmp(clockState, "debug") == 0) {
         return ClockState::DEBUG;
@@ -240,6 +245,8 @@ ClockState cycleClockState(const ClockState clockState) {
         case ClockState::TIME_SYNC:
             return ClockState::ON;
         case ClockState::ON:
+            return ClockState::ON_STATIC;
+        case ClockState::ON_STATIC:
             return ClockState::OFF;
     }
 }
@@ -280,6 +287,8 @@ rgbValues_t getLEDColor(const ClockState clockState) {
     switch (clockState) {
         case ClockState::ON:
             return Constants::LED_COLOR_GREEN_DULL;
+        case ClockState::ON_STATIC:
+            return Constants::LED_COLOR_YELLOW_DULL;
         case ClockState::DEBUG: // Rolling Digits
             return Constants::LED_COLOR_CYAN_DULL;
         case ClockState::TIME_SYNC:
@@ -491,8 +500,8 @@ void displayNixieTubeDigitPair(const unsigned int anodePin,
     }
     if (digit1 >= 0 || digit2 >= 0) {
         digitalWrite(anodePin, HIGH);
-        delay(onTimeDelay);
     }
+    delay(onTimeDelay);
     digitalWrite(anodePin, LOW);
 }
 
@@ -555,6 +564,7 @@ void DisplayNixieTubeDateTime(const ClockState clockState, const nixieDisplay_t 
                 printNixieDisplay(digits);
             }
         case ClockState::ON:
+        case ClockState::ON_STATIC:
             displayNixieTubeTime(digits);
             displayNixieTubeDate(digits);
             break;
@@ -631,7 +641,9 @@ void DisplayNixieTubeDateTime(const ClockState clockState, tmElements_t &tm) {
     if (currentDigits.Dots != targetDigits.Dots) {
         currentDigits.Dots = targetDigits.Dots;
     }
-    if (currentDigits.Colon != targetDigits.Colon) {
+    if (clockState == ClockState::ON_STATIC) {
+        currentDigits.Colon = true;
+    } else if (currentDigits.Colon != targetDigits.Colon) {
         currentDigits.Colon = targetDigits.Colon;
     }
 
