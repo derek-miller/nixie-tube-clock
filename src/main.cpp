@@ -1,5 +1,4 @@
 #include <Arduino.h>
-#include <avr/wdt.h>
 #include <EEPROM.h>
 #include <Ethernet.h>
 #include <SPI.h>
@@ -555,9 +554,6 @@ uint8_t debugCycleCount = 0;
 constexpr uint8_t debugDisplayCycles = 40;
 
 void DisplayNixieTubeDateTime(const ClockState clockState, const nixieDisplay_t &digits) {
-    // Reset the watchdog timer in the display path.
-    wdt_reset();
-
     switch (clockState) {
         case ClockState::DEBUG:
             if (debugCycleCount == debugDisplayCycles) {
@@ -735,9 +731,6 @@ void mqttLoop() {
 }
 
 void setup() {
-    // Enable the watchdog timer with a 8s timeout
-    wdt_enable(WDTO_8S);
-
     Serial.begin(9600);
 
     // LED Setup
