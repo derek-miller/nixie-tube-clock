@@ -499,8 +499,8 @@ void displayNixieTubeDigitPair(const unsigned int anodePin,
     }
     if (digit1 >= 0 || digit2 >= 0) {
         digitalWrite(anodePin, HIGH);
+        delay(onTimeDelay);
     }
-    delay(onTimeDelay);
     digitalWrite(anodePin, LOW);
 }
 
