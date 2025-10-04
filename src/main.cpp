@@ -341,6 +341,9 @@ void SetRTCDateTime(const tmElements_t &tm) {
     SPI.setDataMode(SPI_MODE0);
 }
 
+time_t nextDailySync = 0;
+bool needsDailySync = false;
+
 void GetRTCDateTime(tmElements_t &tm) {
     ts t{};
     SPI.setDataMode(SPI_MODE3);
@@ -354,6 +357,12 @@ void GetRTCDateTime(tmElements_t &tm) {
     tm.Day = t.mday;
     tm.Month = t.mon;
     tm.Year = CalendarYrToTm(t.year);
+
+    // If we have crossed into a new day, set the daily sync flag
+    const time_t currentTimeSeconds = makeTime(tm);
+    if (currentTimeSeconds >= nextDailySync) {
+        needsDailySync = true;
+    }
 }
 
 
@@ -361,21 +370,24 @@ void GetRTCDateTime(tmElements_t &tm) {
  * High Level Helper Functions
  */
 TimeChangeRule usPDT = {"PDT", Second, Sun, Mar, 2, -300}; // UTC−07:00
-TimeChangeRule usPST = {"PST", First, Sun, Nov, 2, -360};  // UTC−08:00
+TimeChangeRule usPST = {"PST", First, Sun, Nov, 2, -360}; // UTC−08:00
 TimeChangeRule usMDT = {"MDT", Second, Sun, Mar, 2, -300}; // UTC−06:00
-TimeChangeRule usMST = {"MST", First, Sun, Nov, 2, -360};  // UTC−07:00
+TimeChangeRule usMST = {"MST", First, Sun, Nov, 2, -360}; // UTC−07:00
 TimeChangeRule usCDT = {"CDT", Second, Sun, Mar, 2, -300}; // UTC−05:00
-TimeChangeRule usCST = {"CST", First, Sun, Nov, 2, -360};  // UTC−06:00
+TimeChangeRule usCST = {"CST", First, Sun, Nov, 2, -360}; // UTC−06:00
 TimeChangeRule usEDT = {"EDT", Second, Sun, Mar, 2, -240}; // UTC−04:00
-TimeChangeRule usEST = {"EST", First, Sun, Nov, 2, -300};  // UTC−05:00
+TimeChangeRule usEST = {"EST", First, Sun, Nov, 2, -300}; // UTC−05:00
 
 Timezone usPT(usPDT, usPST);
 Timezone usMT(usMDT, usMST);
-Timezone usMT_AZ( usMST);
+Timezone usMT_AZ(usMST);
 Timezone usCT(usCDT, usCST);
 Timezone usET(usEDT, usEST);
 
 LedState UpdateRTCDateTime() {
+    // Always reset the daily sync flag, even on failure to avoid loop.
+    needsDailySync = false;
+
     Serial.print("Syncing time with ");
     Serial.print(NTP_POOL_SERVER_NAME);
     Serial.print("... ");
@@ -409,6 +421,11 @@ LedState UpdateRTCDateTime() {
     } else {
         local = unixTime;
     }
+
+    // Update the next daily sync time
+    const time_t localDayStart = local - local % 86400;
+    nextDailySync = localDayStart + 86400;
+
     // ReSharper restore All
     breakTime(local, localElements);
     Serial.print("LOCAL: ");
@@ -505,20 +522,22 @@ void displayNixieTubeDigitPair(const unsigned int anodePin,
 }
 
 void displayNixieTubeDigitPair(const unsigned int anodePin, const int digit1, const int digit2,
-                              const unsigned long onTimeDelay) {
-    displayNixieTubeDigitPair(anodePin, digit1, Pins::CATHODE_TIME_SEL_A, digit2, Pins::CATHODE_TIME_SEL_B, onTimeDelay);
+                               const unsigned long onTimeDelay) {
+    displayNixieTubeDigitPair(anodePin, digit1, Pins::CATHODE_TIME_SEL_A, digit2, Pins::CATHODE_TIME_SEL_B,
+                              onTimeDelay);
 }
 
 void displayNixieTubeDatePair(const unsigned int anodePin, const int digit1, const int digit2,
                               const unsigned long onTimeDelay) {
-    displayNixieTubeDigitPair(anodePin, digit1, Pins::CATHODE_DATE_SEL_A, digit2, Pins::CATHODE_DATE_SEL_B, onTimeDelay);
+    displayNixieTubeDigitPair(anodePin, digit1, Pins::CATHODE_DATE_SEL_A, digit2, Pins::CATHODE_DATE_SEL_B,
+                              onTimeDelay);
 }
 
 void displayNixieTubeTime(const nixieDisplay_t &digits) {
     displayNixieTubeDigitPair(Pins::ANODE_TIME_SEL.sel0, digits.UpperHour, digits.LowerHour,
-                             Constants::IN_18_ON_TIME_DELAY);
+                              Constants::IN_18_ON_TIME_DELAY);
     displayNixieTubeDigitPair(Pins::ANODE_TIME_SEL.sel1, digits.UpperMin, digits.LowerMin,
-                             Constants::IN_18_ON_TIME_DELAY);
+                              Constants::IN_18_ON_TIME_DELAY);
     displayNixieTubeDigitPair(Pins::ANODE_TIME_SEL.sel2, digits.Colon ? 0 : -1, -1, Constants::INS_1_ON_TIME_DELAY);
     // UNUSED displayNixieTubeTimePair(Pins::ANODE_TIME_SEL_PINS.sel3, -1, -1, IN_18_ON_TIME_DELAY);
 }
@@ -714,7 +733,6 @@ void mqttLoop() {
                     } else {
                         Serial.println("failed!");
                     }
-
                 } else {
                     Serial.println("failed!");
                 }
@@ -785,7 +803,12 @@ void loop() {
     ClockState clockState = getClockState();
 
     // Check if we need to sync the time
-    if (clockState == ClockState::TIME_SYNC) {
+    if (
+        // Check if we need to perform the daily sync
+        ((clockState == ClockState::ON || clockState == ClockState::ON_STATIC) && needsDailySync) ||
+        // Or a manual time sync was requested
+        clockState == ClockState::TIME_SYNC
+    ) {
         setLedColor(LedState::PENDING);
         ledState = UpdateRTCDateTime();
         clockState = getClockState(true);
