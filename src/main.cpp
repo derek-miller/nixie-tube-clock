@@ -143,6 +143,29 @@ ClockState getClockState() {
     return getClockState(false);
 }
 
+ClockState cycleClockState(const ClockState clockState) {
+    switch (clockState) {
+        default:
+        case ClockState::DEBUG:
+        case ClockState::OFF:
+        case ClockState::TIME_SYNC:
+            return ClockState::ON;
+        case ClockState::ON:
+            return ClockState::ON_STATIC;
+        case ClockState::ON_STATIC:
+            return ClockState::OFF;
+    }
+}
+
+ClockState toggleClockState(const ClockState clockState) {
+    switch (clockState) {
+        case ClockState::OFF:
+            return ClockState::ON;
+        default:
+            return ClockState::OFF;
+    }
+}
+
 const char *convertClockState(const ClockState clockState) {
     switch (clockState) {
         case ClockState::ON:
@@ -171,6 +194,9 @@ ClockState convertClockState(const char *clockState) {
     }
     if (strcmp(clockState, "time-sync") == 0) {
         return ClockState::TIME_SYNC;
+    }
+    if (strcmp(clockState, "toggle") == 0) {
+        return toggleClockState(getClockState());
     }
     if (strcmp(clockState, "off") == 0) {
         return ClockState::OFF;
@@ -233,20 +259,6 @@ void setClockState(const ClockState clockState) {
             EEPROM.update(Constants::CLOCK_STATE_ADDR, static_cast<int>(clockState));
         }
         sendMqttClockStateUpdate(clockState);
-    }
-}
-
-ClockState cycleClockState(const ClockState clockState) {
-    switch (clockState) {
-        default:
-        case ClockState::DEBUG:
-        case ClockState::OFF:
-        case ClockState::TIME_SYNC:
-            return ClockState::ON;
-        case ClockState::ON:
-            return ClockState::ON_STATIC;
-        case ClockState::ON_STATIC:
-            return ClockState::OFF;
     }
 }
 
