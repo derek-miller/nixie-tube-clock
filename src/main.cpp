@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <avr/wdt.h>
 #include <EEPROM.h>
 #include <Ethernet.h>
 #include <SPI.h>
@@ -96,6 +97,10 @@ namespace Pins {
 EthernetUDP udp;
 NTPClient timeClient(udp, NTP_POOL_SERVER_NAME);
 EthernetClient ethClient;
+
+// Track Ethernet maintenance interval
+unsigned long lastEthernetMaintain = 0;
+constexpr unsigned long ETHERNET_MAINTAIN_INTERVAL = 60000; // 1 minute
 
 /*******************************************************************************
  * HELPER FUNCTIONS
@@ -348,9 +353,13 @@ void SetRTCDateTime(const tmElements_t &tm) {
     };
     // printTimeElements(tm);
 
+    // Disable interrupts during SPI mode switch to prevent Ethernet library
+    // from accessing SPI bus while in wrong mode
+    noInterrupts();
     SPI.setDataMode(SPI_MODE3);
     DS3234_set(Pins::RTC_SEL, time);
     SPI.setDataMode(SPI_MODE0);
+    interrupts();
 }
 
 time_t nextDailySync = 0;
@@ -358,9 +367,14 @@ bool needsDailySync = false;
 
 void GetRTCDateTime(tmElements_t &tm) {
     ts t{};
+
+    // Disable interrupts during SPI mode switch to prevent Ethernet library
+    // from accessing SPI bus while in wrong mode
+    noInterrupts();
     SPI.setDataMode(SPI_MODE3);
     DS3234_get(Pins::RTC_SEL, &t);
     SPI.setDataMode(SPI_MODE0);
+    interrupts();
 
     tm.Second = t.sec;
     tm.Minute = t.min;
@@ -399,6 +413,9 @@ Timezone usET(usEDT, usEST);
 LedState UpdateRTCDateTime() {
     // Always reset the daily sync flag, even on failure to avoid loop.
     needsDailySync = false;
+
+    // Reset watchdog before potentially long NTP operation
+    wdt_reset();
 
     Serial.print("Syncing time with ");
     Serial.print(NTP_POOL_SERVER_NAME);
@@ -723,6 +740,8 @@ void mqttLoop() {
         const unsigned long now = millis();
         if (now - lastReconnectAttempt >= 60000) {
             lastReconnectAttempt = now;
+            // Reset watchdog before potentially long MQTT connection attempt
+            wdt_reset();
             Serial.print("Connecting to MQTT... ");
             if (
                 mqttClient.connect(
@@ -761,6 +780,10 @@ void mqttLoop() {
 }
 
 void setup() {
+    // Disable watchdog early in case we're recovering from a WDT reset
+    // (AVR keeps the watchdog enabled after a WDT reset)
+    wdt_disable();
+
     Serial.begin(9600);
 
     // LED Setup
@@ -804,14 +827,28 @@ void setup() {
         Serial.println("failed!");
     }
 
-    // Ethernet Web Server Setup
+    // Set socket timeout to prevent indefinite blocking (in milliseconds)
+    // This helps prevent SPI bus lockups when network is unreachable
+    ethClient.setConnectionTimeout(5000);
+
+    // Set MQTT socket timeout to 5 seconds (default is 15)                                                                                  
+    // This reduces how long blocking operations can stall the loop                                                                          
+    mqttClient.setSocketTimeout(5);  
+
+    // MQTT Setup
     mqttLoop();
 
     // NTP Setup
     timeClient.begin();
+
+    // Enable watchdog now that all blocking setup is complete
+    wdt_enable(WDTO_8S);
 }
 
 void loop() {
+    // Reset watchdog at start of each loop iteration
+    wdt_reset();
+
     ClockState clockState = getClockState();
 
     // Check if we need to sync the time
@@ -871,4 +908,11 @@ void loop() {
 
     // Run the MQTT client
     mqttLoop();
+
+    // Maintain Ethernet connection (DHCP lease renewal, socket cleanup)
+    const unsigned long now = millis();
+    if (now - lastEthernetMaintain >= ETHERNET_MAINTAIN_INTERVAL) {
+        lastEthernetMaintain = now;
+        Ethernet.maintain();
+    }
 }
