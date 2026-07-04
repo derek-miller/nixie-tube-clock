@@ -819,6 +819,10 @@ void setup() {
         pinMode(pins.sel3, OUTPUT);
     }
 
+    // Ensure all tubes are off before starting Ethernet (DHCP blocks for seconds)
+    turnOffNixieTubeTime();
+    turnOffNixieTubeDate();
+
     // Ethernet Setup
     Serial.print("Connecting to network... ");
     if (Ethernet.begin(Constants::MAC_ADDRESS) == 1) {
